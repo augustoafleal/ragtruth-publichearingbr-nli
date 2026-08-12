@@ -1,0 +1,17 @@
+# Copy this file to publichearing_transfer.local.yaml and replace each RUN_ID.
+# Paths are relative to the repository root. Metrics remain in the selected artifacts.
+analysis_name: publichearing-transfer
+
+experiments:
+  publichearing_in_domain:
+    path: results/publichearing_lora_attention_mil/<RUN_ID>
+  ragtruth_confirmatory:
+    path: runs/ragtruth_confirmatory/<RUN_ID>
+  off_the_shelf:
+    path: runs/publichearing_off_the_shelf_max_entailment/<RUN_ID>
+  threshold_transfer:
+    path: runs/ragtruth_off_the_shelf_threshold_transfer/<RUN_ID>
+  thresholded_bootstrap:
+    path: runs/publichearing_thresholded_paired_bootstrap/<RUN_ID>
+  continuous_bootstrap:
+    path: runs/publichearing_paired_grouped_bootstrap/<RUN_ID>

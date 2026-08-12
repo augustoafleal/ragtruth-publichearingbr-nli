@@ -1,0 +1,33 @@
+protocol:
+  name: publichearing_thresholded_paired_bootstrap
+  analysis_type: paired_grouped_bootstrap
+  group_key: hearing_id
+  paired: true
+inputs:
+  threshold_transfer_run:
+    path: ../runs/ragtruth_off_the_shelf_threshold_transfer/3ceffc4a74b484fe
+    expected_signature: 3ceffc4a74b484fe
+  baseline_run:
+    path: ../runs/publichearing_off_the_shelf_max_entailment/54d9c623f8685c39
+    expected_signature: 54d9c623f8685c39
+    score_column: hallucination_score
+  confirmatory_run:
+    path: ../runs/ragtruth_confirmatory/4e12933c51136624
+    expected_signature: 4e12933c51136624
+    seeds: [0, 1, 2]
+    score_column: probability
+threshold_regimes: [best_f1, fpr10]
+bootstrap:
+  n_replicates: 10000
+  seed: 20260807
+  confidence_level: 0.95
+  ci_method: percentile
+  preserve_group_multiplicity: true
+  same_samples_across_methods: true
+  same_samples_across_seeds: true
+  same_samples_across_threshold_regimes: true
+  reestimate_thresholds: false
+primary_metrics: [f1, recall, mcc, balanced_accuracy]
+secondary_metrics: [precision, fpr, specificity, accuracy]
+output:
+  root: ../runs/publichearing_thresholded_paired_bootstrap

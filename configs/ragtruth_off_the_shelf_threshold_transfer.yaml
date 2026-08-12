@@ -1,0 +1,45 @@
+protocol:
+  name: ragtruth_off_the_shelf_threshold_transfer
+  analysis_type: source_domain_threshold_transfer
+model:
+  model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  tokenizer_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  tokenizer_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  max_length: 512
+  truncation: only_first
+  padding: longest
+  batch_size: 16
+  device: auto
+  premise: chunk
+  hypothesis: claim
+  aggregation: max_entailment_over_valid_evidence
+  score: one_minus_max_entailment
+  label_mapping_strategy: dynamic_id2label_and_label2id
+  expected_label_mapping:
+    entailment: 0
+    neutral: 1
+    contradiction: 2
+source_domain:
+  confirmatory_config: ragtruth_lora_attention_mil_confirmatory.yaml
+  dataset_signature: 0cdf598fa866741d
+  dataset_sha256: 357e05b08cdcc22b766dce432fd8ed5caa7703ddf144dc02da24ef63e7ff0a7c
+  split_signature: 525edec2966a4fac
+  split_seed: 42
+  expected_validation_examples: 4517
+  expected_validation_sources: 126
+  expected_validation_positives: 524
+operating_points:
+  best_f1_criterion: f1
+  fpr10_criterion: fpr10
+  target_fpr: 0.10
+  decision_operator: ">="
+  threshold_selection_implementation: ragtruth_transfer.metrics.select_threshold
+comparison_inputs:
+  publichearing_baseline_run: ../runs/publichearing_off_the_shelf_max_entailment/54d9c623f8685c39
+  publichearing_baseline_signature: 54d9c623f8685c39
+  ragtruth_confirmatory_run: ../runs/ragtruth_confirmatory/4e12933c51136624
+  ragtruth_confirmatory_signature: 4e12933c51136624
+  lora_seeds: [0, 1, 2]
+output:
+  root: ../runs/ragtruth_off_the_shelf_threshold_transfer

@@ -1,0 +1,33 @@
+run_name: ragtruth_qa_top4_embeddings_smoke
+output_root: ../results/ragtruth_qa_top4
+cache_root: ../cache/ragtruth_qa_top4
+schema_version: ragtruth-qa-top4-v1
+top_k: 4
+sample_size: 20
+audit_seed: 42
+dataset:
+  response_path: ../data/raw/ragtruth/response.jsonl
+  source_path: ../data/raw/ragtruth/source_info.jsonl
+  revision: local-files-sha256
+  task: QA
+  splits: [train, test]
+  quality: good
+  granularity: claim
+  min_words: 3
+retriever:
+  model_id: mock-hash-encoder
+  revision: local-v1
+  tokenizer_model_id: mock-whitespace
+  tokenizer_revision: local-v1
+  encoder_backend: mock
+  embedding_dim: 32
+  chunk_size_tokens: 16
+  chunk_overlap_tokens: 4
+  batch_size: 8
+  device: cpu
+  dtype: float32
+  prefix_query: "query: "
+  prefix_passage: "passage: "
+  strategy: topk_cosine
+  normalize_whitespace: true
+  max_length: null

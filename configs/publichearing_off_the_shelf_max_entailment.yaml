@@ -1,0 +1,36 @@
+protocol:
+  name: publichearing_off_the_shelf_max_entailment
+  evaluation_type: deterministic_zero_shot_nli_baseline
+model:
+  model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  tokenizer_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  tokenizer_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  max_length: 512
+  premise_field: evidence
+  hypothesis_field: claim
+  truncation: only_first
+  padding: longest
+  aggregation: max_entailment
+  positive_score: one_minus_max_entailment
+  label_mapping:
+    entailment: 0
+    neutral: 1
+    contradiction: 2
+  batch_size: 16
+  device: auto
+dataset:
+  path: ~/.cache/huggingface/hub/datasets--unicamp-dl--PublicHearingBR/snapshots/2f84a44bc34df483e25c987f0ff86caad0ab3433/PublicHearingBR_NLI.jsonl
+  sha256: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
+  revision: 2f84a44bc34df483e25c987f0ff86caad0ab3433
+  expected_examples: 4235
+  expected_positives: 501
+evaluation:
+  use_threshold: false
+  calculate_threshold_free_metrics: true
+  compare_old_hardcoded_values: false
+output:
+  root: ../runs/publichearing_off_the_shelf_max_entailment
+confirmatory_reference:
+  prediction_paths:
+    - ../runs/ragtruth_confirmatory/4e12933c51136624

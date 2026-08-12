@@ -1,0 +1,33 @@
+run_name: ragtruth_qa_top4_embeddings
+output_root: ../results/ragtruth_qa_top4
+cache_root: ../cache/ragtruth_qa_top4
+schema_version: ragtruth-qa-top4-v1
+top_k: 4
+sample_size: 100
+audit_seed: 42
+dataset:
+  response_path: ../data/raw/ragtruth/response.jsonl
+  source_path: ../data/raw/ragtruth/source_info.jsonl
+  revision: local-files-sha256
+  task: QA
+  splits: [train, test]
+  quality: good
+  granularity: claim
+  min_words: 3
+retriever:
+  model_id: intfloat/multilingual-e5-base
+  revision: d128750597153bb5987e10b1c3493a34e5a4502a
+  tokenizer_model_id: intfloat/multilingual-e5-base
+  tokenizer_revision: d128750597153bb5987e10b1c3493a34e5a4502a
+  encoder_backend: transformers
+  embedding_dim: 768
+  chunk_size_tokens: 256
+  chunk_overlap_tokens: 64
+  batch_size: 64
+  device: auto
+  dtype: float32
+  prefix_query: "query: "
+  prefix_passage: "passage: "
+  strategy: topk_cosine
+  normalize_whitespace: true
+  max_length: 512

@@ -1,0 +1,134 @@
+# RAGTruth → PublicHearingBR-NLI
+
+Este repositório implementa a preparação de dados e os seis protocolos
+científicos atuais do estudo RAGTruth → PublicHearingBR:
+
+1. PublicHearingBR supervisionado e in-domain
+2. RAGTruth confirmatório com três seeds
+3. baseline NLI off-the-shelf
+4. transferência de thresholds do RAGTruth
+5. bootstrap pareado e agrupado para scores contínuos
+6. bootstrap pareado e agrupado para métricas thresholded
+
+Smoke tests, screening e preparação de dados não são resultados científicos
+principais.
+
+## Instalação
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev,docs]"
+```
+
+## Documentação
+
+A documentação completa descreve os dados necessários, cada protocolo,
+comandos e outputs:
+
+```bash
+mkdocs serve
+```
+
+Para validar a documentação:
+
+```bash
+mkdocs build --strict
+```
+
+## Preparação do RAGTruth
+
+Baixe os arquivos de origem:
+
+```bash
+python scripts/download_ragtruth.py --output-dir data/raw/ragtruth
+```
+
+Construa o Top-4 semântico com boundaries independentes dos labels:
+
+```bash
+python scripts/prepare_ragtruth_top4.py \
+  --config configs/ragtruth_qa_top4_label_independent.yaml \
+  --device cuda \
+  --batch-size 64 \
+  --resume
+```
+
+Construa a visão Parquet deduplicada:
+
+```bash
+python scripts/build_ragtruth_training_view.py \
+  --input-run-dir results/ragtruth_qa_top4_label_independent/ragtruth_qa_top4_label_independent_embeddings/<signature> \
+  --output-root results/ragtruth_qa_training_view
+```
+
+## Experimentos canônicos
+
+### PublicHearingBR supervisionado
+
+```bash
+python scripts/run_publichearing_cv.py \
+  --config configs/publichearing_lora_attention_mil_confirmatory.yaml
+```
+
+### RAGTruth confirmatório
+
+Valide os inputs e execute as três fases:
+
+```bash
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_lora_attention_mil_confirmatory.yaml \
+  --validate-only
+
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_lora_attention_mil_confirmatory.yaml \
+  --phase train
+
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_lora_attention_mil_confirmatory.yaml \
+  --phase evaluate
+
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_lora_attention_mil_confirmatory.yaml \
+  --phase aggregate
+```
+
+### Baseline NLI off-the-shelf
+
+```bash
+python scripts/evaluate_publichearing_off_the_shelf_nli.py \
+  --config configs/publichearing_off_the_shelf_max_entailment.yaml
+```
+
+### Transferência de thresholds
+
+```bash
+python scripts/run_ragtruth_off_the_shelf_threshold_transfer.py \
+  --config configs/ragtruth_off_the_shelf_threshold_transfer.yaml
+```
+
+### Bootstrap contínuo
+
+```bash
+python scripts/run_publichearing_paired_grouped_bootstrap.py \
+  --config configs/publichearing_paired_grouped_bootstrap.yaml
+```
+
+### Bootstrap thresholded
+
+```bash
+python scripts/run_publichearing_thresholded_paired_bootstrap.py \
+  --config configs/publichearing_thresholded_paired_bootstrap.yaml
+```
+
+## Validação local
+
+```bash
+python -m compileall -q src scripts
+pytest -q
+mkdocs build --strict
+```
+
+Os artefatos científicos são gravados em `runs/` e `results/`. Manifests,
+resolved configs, hashes, predictions e métricas nesses diretórios são a fonte
+de verdade para cada execução congelada.

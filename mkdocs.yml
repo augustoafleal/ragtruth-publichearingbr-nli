@@ -1,0 +1,61 @@
+site_name: RAGTruth to PublicHearingBR
+site_description: Reproducible experiment documentation
+site_url: http://localhost:8000
+repo_name: ragtruth-publichearing-scripts
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: brown
+      accent: red
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: brown
+      accent: red
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+extra_css:
+  - stylesheets/theme.css
+
+nav:
+  - Home: index.md
+  - Experiments:
+      - Inventory: experiments/experimentos_principais_report.md
+      - PublicHearingBR supervised: experiments/publichearingbr-supervised.md
+      - RAGTruth confirmatory: experiments/ragtruth-confirmatory.md
+      - Off the shelf NLI baseline: experiments/off-the-shelf-nli.md
+      - Threshold transfer: experiments/threshold-transfer.md
+      - Continuous paired bootstrap: experiments/continuous-bootstrap.md
+      - Thresholded paired bootstrap: experiments/thresholded-bootstrap.md
+  - Preparation:
+      - Overview: preparation/index.md
+      - Environment: preparation/environment.md
+      - RAGTruth data: preparation/ragtruth-data.md
+      - PublicHearingBR data: preparation/publichearingbr-data.md

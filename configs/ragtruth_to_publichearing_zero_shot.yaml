@@ -1,0 +1,24 @@
+# Preliminary exploratory diagnostic only. It is not a confirmatory result.
+ragtruth_run_dir: ../runs/ragtruth_lora_attention_mil_parquet
+checkpoint_relative_path: checkpoints/epoch_03
+validation_predictions_relative_path: checkpoints/epoch_03/validation_predictions.csv
+expected_run_signature: 8ea88ae6fc9a42c38398c442d12ba34036640342ee5c3e2c35ae5295197c5719
+expected_source_run_name: ragtruth_lora_attention_mil_parquet
+expected_ragtruth_dataset_signature: 0cdf598fa866741d
+expected_ragtruth_schema: ragtruth-qa-training-view-deduplicated-v1
+expected_ragtruth_split_signature: 525edec2966a4fac
+expected_best_epoch: 3
+expected_model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+publichearing_path: ~/.cache/huggingface/hub/datasets--unicamp-dl--PublicHearingBR/snapshots/2f84a44bc34df483e25c987f0ff86caad0ab3433/PublicHearingBR_NLI.jsonl
+publichearing_dataset_sha256: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
+publichearing_dataset_revision: 2f84a44bc34df483e25c987f0ff86caad0ab3433
+expected_publichearing_examples: 4235
+expected_publichearing_positives: 501
+expected_chunks: 4
+batch_size: 4
+dtype: float32
+device: auto
+output_root: ../results/ragtruth_to_publichearing_zero_shot/preliminary
+run_name: ragtruth_en_to_publichearingbr_zero_shot_preliminary
+indomain_reference_dir: ../results/publichearing_lora_attention_mil/741ed3152c2175e7
+seed: 42
