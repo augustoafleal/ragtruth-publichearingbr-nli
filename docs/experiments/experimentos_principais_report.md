@@ -1,8 +1,9 @@
 # Experiment inventory
 
-This inventory lists the six scientific experiment families supported by this
-repository. Smoke runs, screening runs, preliminary diagnostics, and data
-preparation runs are retained for traceability but are not primary results.
+This inventory lists the six core scientific experiment families and the
+controlled pooling ablation supported by this repository. Smoke runs, screening
+runs, preliminary diagnostics, and data preparation runs are retained for
+traceability but are not primary results.
 
 ## Included experiments
 
@@ -14,6 +15,13 @@ preparation runs are retained for traceability but are not primary results.
   Across 3 seeds: RAGTruth test — AUPRC 0.5273 ± 0.0276, AUROC 0.9009 ±
   0.0066, Brier 0.0736 ± 0.0048; PublicHearingBR zero-shot — AUPRC 0.5949 ±
   0.0142, AUROC 0.8788 ± 0.0036, Brier 0.0881 ± 0.0075.
+- **Controlled pooling ablation**
+  The same RAGTruth confirmatory protocol compares Gated Attention
+  (`4e12933c51136624`), Mean (`6bb8a5d4e8041215`), and Max
+  (`53f48ce4154f075e`). On PublicHearingBR zero-shot, Attention has the highest
+  mean AUPRC (0.5949 ± 0.0142); Max has the highest AUROC (0.8840 ± 0.0040)
+  and lowest Brier (0.0864 ± 0.0103). This is a descriptive three-seed
+  comparison, not a pairwise bootstrap superiority test.
 - **Off the shelf NLI baseline**
   `runs/publichearing_off_the_shelf_max_entailment/54d9c623f8685c39/` is the
   fixed target-domain comparator: AUPRC 0.3375, AUROC 0.7680, Brier 0.1143
