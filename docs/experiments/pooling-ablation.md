@@ -21,7 +21,12 @@ split, seeds, optimization, and checkpoint selection remain fixed. Gated
 Attention alone has additional pooling parameters; Mean and Max are
 non-parametric.
 
-## Frozen campaigns
+## Required preparation
+
+Complete the [RAGTruth confirmatory experiment](ragtruth-confirmatory.md) and
+build the signed RAGTruth training view described in [RAGTruth data](../preparation/ragtruth-data.md).
+
+The frozen campaigns are:
 
 | Pooling | Confirmatory signature | Configuration |
 | --- | --- | --- |
@@ -75,7 +80,7 @@ Use `--resume` with the training phase after an interruption. Each pooling type
 has a distinct signature, so it cannot reuse or overwrite an incompatible
 campaign directory.
 
-## Outputs and checks
+## Outputs
 
 Each campaign writes `runs/ragtruth_confirmatory/<signature>/` with one
 directory per seed, validation predictions and thresholds, RAGTruth test
@@ -89,44 +94,16 @@ negative valid features for Max, the direct `[B,128]` pre-classifier pooling
 shape, Gated Attention regression behavior, pooling-specific signatures, and
 Mean/Max zero-shot source validation.
 
-## Results
+## Result scope
 
-Threshold-free metrics are mean ± sample standard deviation across the three
-seeds. AUPRC is the decision criterion for the imbalanced PublicHearingBR target;
-AUROC and Brier score are complementary diagnostics.
+The ablation uses three fixed seeds and reports their mean and sample standard
+deviation. Thresholds are selected separately per pooling and seed on RAGTruth
+validation only, then frozen before RAGTruth test and PublicHearingBR zero-shot
+evaluation.
 
-| Dataset | Pooling | AUPRC | AUROC | Brier (lower is better) |
-| --- | --- | ---: | ---: | ---: |
-| RAGTruth test | Gated Attention | 0.5273 ± 0.0276 | 0.9009 ± 0.0066 | 0.0736 ± 0.0048 |
-| RAGTruth test | Mean | **0.5366 ± 0.0122** | 0.8851 ± 0.0108 | 0.0738 ± 0.0125 |
-| RAGTruth test | Max | 0.5230 ± 0.0288 | **0.9028 ± 0.0044** | **0.0684 ± 0.0138** |
-| PublicHearingBR zero-shot | Gated Attention | **0.5949 ± 0.0142** | 0.8788 ± 0.0036 | 0.0881 ± 0.0075 |
-| PublicHearingBR zero-shot | Mean | 0.5735 ± 0.0036 | 0.8661 ± 0.0067 | 0.0956 ± 0.0151 |
-| PublicHearingBR zero-shot | Max | 0.5704 ± 0.0188 | **0.8840 ± 0.0040** | **0.0864 ± 0.0103** |
-
-For PublicHearingBR operating points selected only on RAGTruth validation:
-
-| Regime | Pooling | F1 | Recall | FPR |
-| --- | --- | ---: | ---: | ---: |
-| `best_f1` | Gated Attention | **0.5444 ± 0.0078** | **0.5236 ± 0.0686** | 0.0535 ± 0.0218 |
-| `best_f1` | Mean | 0.5013 ± 0.0098 | 0.4165 ± 0.0208 | **0.0329 ± 0.0054** |
-| `best_f1` | Max | 0.5373 ± 0.0127 | 0.4963 ± 0.0446 | 0.0469 ± 0.0107 |
-| `fpr10` | Gated Attention | 0.5425 ± 0.0063 | 0.5995 ± 0.0321 | 0.0820 ± 0.0138 |
-| `fpr10` | Mean | 0.5313 ± 0.0073 | **0.6148 ± 0.0158** | 0.0938 ± 0.0034 |
-| `fpr10` | Max | **0.5455 ± 0.0110** | 0.6028 ± 0.0405 | **0.0816 ± 0.0164** |
-
-## Interpretation and scope
-
-Gated Attention is retained as the selected aggregation because it has the
-highest mean zero-shot PublicHearingBR AUPRC, the decision criterion used for
-the imbalanced target. Max is a credible alternative with the strongest target
-AUROC and Brier profile, but it does not exceed Attention on target AUPRC. Mean
-does not lead the target threshold-free metrics.
-
-This is a descriptive three-seed ablation. The existing paired grouped
-bootstraps compare Gated Attention with the off-the-shelf NLI baseline; they do
-not estimate uncertainty for Attention-versus-Mean or Attention-versus-Max.
-They must not be interpreted as pairwise pooling superiority tests.
+The existing paired grouped bootstraps compare Gated Attention with the
+off-the-shelf NLI baseline; they do not estimate Attention-versus-Mean or
+Attention-versus-Max uncertainty. Pooling comparisons are therefore descriptive.
 
 `notebooks/03_pooling_ablation.ipynb` is the read-only visual summary of these
 frozen artifacts. It uses `notebooks/configs/pooling_ablation.local.yaml` or
