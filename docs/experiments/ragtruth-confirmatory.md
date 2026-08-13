@@ -60,3 +60,10 @@ thresholds, split assignments, aggregate metrics, and manifests.
 
 The campaign uses seeds 0, 1, and 2. It does not select a best seed and does
 not create an ensemble.
+
+## Controlled pooling ablation
+
+The legacy Gated Attention campaign is also compared with Mean and Max pooling
+under the same frozen RAGTruth-to-PublicHearingBR protocol. See
+[Pooling ablation](pooling-ablation.md) for the variant configurations,
+signatures, results, and scope of the comparison.

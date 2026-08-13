@@ -47,9 +47,10 @@ extra_css:
 nav:
   - Home: index.md
   - Experiments:
-      - Inventory: experiments/experimentos_principais_report.md
+      - Inventory: experiments/experiment-inventory.md
       - PublicHearingBR supervised: experiments/publichearingbr-supervised.md
       - RAGTruth confirmatory: experiments/ragtruth-confirmatory.md
+      - Pooling ablation: experiments/pooling-ablation.md
       - Off the shelf NLI baseline: experiments/off-the-shelf-nli.md
       - Threshold transfer: experiments/threshold-transfer.md
       - Continuous paired bootstrap: experiments/continuous-bootstrap.md

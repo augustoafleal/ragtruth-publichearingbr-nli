@@ -1,7 +1,8 @@
 # RAGTruth → PublicHearingBR-NLI
 
-Este repositório implementa a preparação de dados e os seis protocolos
-científicos atuais do estudo RAGTruth → PublicHearingBR:
+Este repositório implementa a preparação de dados, os seis protocolos
+científicos centrais e uma ablação controlada de pooling do estudo RAGTruth →
+PublicHearingBR:
 
 1. PublicHearingBR supervisionado e in-domain
 2. RAGTruth confirmatório com três seeds
@@ -9,6 +10,10 @@ científicos atuais do estudo RAGTruth → PublicHearingBR:
 4. transferência de thresholds do RAGTruth
 5. bootstrap pareado e agrupado para scores contínuos
 6. bootstrap pareado e agrupado para métricas thresholded
+
+A ablação compara `gated_attention`, `mean` e `max` no mesmo protocolo
+RAGTruth → PublicHearingBR; ela é documentada em
+`docs/experiments/pooling-ablation.md`.
 
 Smoke tests, screening e preparação de dados não são resultados científicos
 principais.
@@ -92,6 +97,15 @@ python scripts/run_ragtruth_confirmatory.py \
   --config configs/ragtruth_lora_attention_mil_confirmatory.yaml \
   --phase aggregate
 ```
+
+### Ablação de pooling
+
+As variantes Mean e Max usam os configs
+`configs/ragtruth_lora_mean_mil_confirmatory.yaml` e
+`configs/ragtruth_lora_max_mil_confirmatory.yaml`, respectivamente. Execute
+`--validate-only`, `--phase train`, `--phase evaluate` e `--phase aggregate`
+para cada variante. As signatures e resultados canônicos estão em
+`docs/experiments/pooling-ablation.md`.
 
 ### Baseline NLI off-the-shelf
 

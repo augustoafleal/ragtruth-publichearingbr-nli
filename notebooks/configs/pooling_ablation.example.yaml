@@ -1,0 +1,11 @@
+# Copy this file to pooling_ablation.local.yaml before selecting different runs.
+# Paths are relative to the repository root. The notebook only reads frozen artifacts.
+analysis_name: pooling-ablation
+
+experiments:
+  gated_attention:
+    path: runs/ragtruth_confirmatory/4e12933c51136624
+  mean:
+    path: runs/ragtruth_confirmatory/6bb8a5d4e8041215
+  max:
+    path: runs/ragtruth_confirmatory/53f48ce4154f075e
