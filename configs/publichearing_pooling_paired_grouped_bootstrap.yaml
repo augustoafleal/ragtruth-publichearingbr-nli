@@ -1,0 +1,38 @@
+protocol:
+  name: publichearing_pooling_ablation_paired_bootstrap
+  analysis_type: paired_grouped_bootstrap
+  group_key: hearing_id
+  paired: true
+inputs:
+  campaigns:
+    gated_attention:
+      path: ../runs/ragtruth_confirmatory/4e12933c51136624
+      expected_signature: 4e12933c51136624
+      score_column: probability
+    mean:
+      path: ../runs/ragtruth_confirmatory/6bb8a5d4e8041215
+      expected_signature: 6bb8a5d4e8041215
+      score_column: probability
+    max:
+      path: ../runs/ragtruth_confirmatory/53f48ce4154f075e
+      expected_signature: 53f48ce4154f075e
+      score_column: probability
+  seeds: [0, 1, 2]
+comparisons:
+  - left: gated_attention
+    right: max
+  - left: gated_attention
+    right: mean
+  - left: mean
+    right: max
+bootstrap:
+  n_replicates: 10000
+  seed: 20260813
+  confidence_level: 0.95
+  ci_method: percentile
+  preserve_group_multiplicity: true
+  same_samples_across_methods: true
+  same_samples_across_seeds: true
+metrics: [auprc, auroc, brier]
+output:
+  root: ../runs/publichearing_pooling_paired_bootstrap

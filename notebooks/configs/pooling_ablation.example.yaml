@@ -9,3 +9,7 @@ experiments:
     path: runs/ragtruth_confirmatory/6bb8a5d4e8041215
   max:
     path: runs/ragtruth_confirmatory/53f48ce4154f075e
+
+analysis:
+  pooling_paired_bootstrap:
+    path: runs/publichearing_pooling_paired_bootstrap/b92d4fd6a6a7e771
