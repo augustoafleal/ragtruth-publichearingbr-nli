@@ -407,7 +407,7 @@ def _valid_parent_manifest(run_dir: Path) -> tuple[dict[str, Any], pd.DataFrame,
     # Pandas 3 may expose Parquet strings as Arrow-backed ``str`` columns.
     # Scalar ``.loc`` access on those columns is unexpectedly expensive for
     # the many singleton groups in this audit, so use ordinary Python objects
-    # for the small textual keys/metadata while retaining list columns.
+    # for textual keys/metadata while retaining list columns.
     for column in frame.columns:
         if str(frame[column].dtype) == "str":
             frame[column] = frame[column].astype(object)

@@ -6,7 +6,114 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from .config import ExperimentConfig
+from .config import ExperimentConfig, SetTransformerSettings
+
+
+class MAB(nn.Module):
+    """Multihead Attention Block used by the Set Transformer.
+
+    This is the MAB structure from Set Transformer: multi-head attention,
+    residual connection and LayerNorm, followed by a residual FFN and a second
+    LayerNorm.  It intentionally has no positional encoding.
+    """
+
+    def __init__(self, dimension: int, num_heads: int, ffn_dim: int, dropout: float) -> None:
+        super().__init__()
+        self.attention = nn.MultiheadAttention(
+            embed_dim=dimension,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.attention_dropout = nn.Dropout(dropout)
+        self.norm_attention = nn.LayerNorm(dimension)
+        self.ffn = nn.Sequential(
+            nn.Linear(dimension, ffn_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_dim, dimension),
+        )
+        self.ffn_dropout = nn.Dropout(dropout)
+        self.norm_ffn = nn.LayerNorm(dimension)
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key_value: torch.Tensor,
+        key_padding_mask: torch.Tensor,
+        *,
+        need_weights: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        attended, weights = self.attention(
+            query,
+            key_value,
+            key_value,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
+            average_attn_weights=True,
+        )
+        hidden = self.norm_attention(query + self.attention_dropout(attended))
+        output = self.norm_ffn(hidden + self.ffn_dropout(self.ffn(hidden)))
+        return output, weights
+
+
+class SAB(nn.Module):
+    """Set Attention Block: MAB(X, X)."""
+
+    def __init__(self, dimension: int, num_heads: int, ffn_dim: int, dropout: float) -> None:
+        super().__init__()
+        self.mab = MAB(dimension, num_heads, ffn_dim, dropout)
+
+    def forward(self, values: torch.Tensor, evidence_mask: torch.Tensor) -> torch.Tensor:
+        output, _ = self.mab(
+            values,
+            values,
+            ~evidence_mask,
+        )
+        # Invalid slots are never keys/values and are made inert before PMA.
+        return output.masked_fill(~evidence_mask.unsqueeze(-1), 0.0)
+
+
+class PMA(nn.Module):
+    """Pooling by Multihead Attention with learned seed vectors."""
+
+    def __init__(
+        self,
+        dimension: int,
+        num_heads: int,
+        ffn_dim: int,
+        num_seeds: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        self.seed_vectors = nn.Parameter(torch.empty(1, num_seeds, dimension))
+        nn.init.xavier_uniform_(self.seed_vectors)
+        self.mab = MAB(dimension, num_heads, ffn_dim, dropout)
+
+    def forward(
+        self,
+        values: torch.Tensor,
+        evidence_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size = values.shape[0]
+        query = self.seed_vectors.expand(batch_size, -1, -1)
+        output, weights = self.mab(
+            query,
+            values,
+            ~evidence_mask,
+            need_weights=True,
+        )
+        if weights is None:
+            raise RuntimeError("PMA deve retornar pesos de atenção")
+        # PyTorch returns head-averaged weights because average_attn_weights is
+        # true: [B, num_seeds, 4].  They are diagnostics, not Gated weights.
+        weights = weights[:, 0, :].masked_fill(~evidence_mask, 0.0)
+        normalizer = weights.sum(dim=1, keepdim=True)
+        fallback = evidence_mask.to(values.dtype)
+        fallback = fallback / fallback.sum(dim=1, keepdim=True)
+        normalized = weights / normalizer.clamp_min(torch.finfo(weights.dtype).eps)
+        weights = torch.where(normalizer > 0, normalized, fallback)
+        return output, weights
 
 
 class HierarchicalEncoderClassifier(nn.Module):
@@ -18,9 +125,10 @@ class HierarchicalEncoderClassifier(nn.Module):
         dropout: float,
         architecture: str,
         attention_size: int,
+        set_transformer: SetTransformerSettings | None = None,
     ) -> None:
         super().__init__()
-        if architecture not in {"mean", "max", "gated_attention"}:
+        if architecture not in {"mean", "max", "gated_attention", "set_transformer"}:
             raise ValueError(architecture)
         self.encoder = encoder
         self.architecture = architecture
@@ -33,6 +141,24 @@ class HierarchicalEncoderClassifier(nn.Module):
             self.attention_v = nn.Sequential(nn.Linear(projection_size, attention_size), nn.Tanh())
             self.attention_u = nn.Sequential(nn.Linear(projection_size, attention_size), nn.Sigmoid())
             self.attention_w = nn.Linear(attention_size, 1, bias=False)
+        elif architecture == "set_transformer":
+            if set_transformer is None:
+                raise ValueError("set_transformer requer parâmetros explícitos")
+            if projection_size != set_transformer.ffn_dim:
+                raise ValueError("Set Transformer requer ffn_dim igual a projection_size")
+            self.sab = SAB(
+                projection_size,
+                set_transformer.num_heads,
+                set_transformer.ffn_dim,
+                dropout,
+            )
+            self.pma = PMA(
+                projection_size,
+                set_transformer.num_heads,
+                set_transformer.ffn_dim,
+                set_transformer.num_seeds,
+                dropout,
+            )
         self.classifier = nn.Sequential(nn.Dropout(dropout), nn.Linear(projection_size, 1))
 
     def forward(
@@ -71,13 +197,17 @@ class HierarchicalEncoderClassifier(nn.Module):
             weights = torch.zeros_like(mask, dtype=projected.dtype)
             for evidence_index in range(n_evidence):
                 weights[:, evidence_index] = (maxima == evidence_index).to(projected.dtype).mean(dim=1)
-        else:
+        elif self.architecture == "gated_attention":
             logits = self.attention_w(
                 self.attention_v(projected) * self.attention_u(projected)
             ).squeeze(-1)
             logits = logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
             weights = torch.softmax(logits, dim=1)
             pooled = torch.sum(projected * weights.unsqueeze(-1), dim=1)
+        else:
+            contextualized = self.sab(projected, mask)
+            pooled, weights = self.pma(contextualized, mask)
+            pooled = pooled.squeeze(1)
 
         logits = self.classifier(pooled).squeeze(-1)
         return logits, weights
@@ -116,6 +246,14 @@ def build_model(
         "encoder_mode": config.encoder_mode,
         "hidden_size": int(model_config.hidden_size),
     }
+    if config.set_transformer is not None:
+        metadata["set_transformer"] = {
+            "num_sab_layers": config.set_transformer.num_sab_layers,
+            "num_heads": config.set_transformer.num_heads,
+            "num_seeds": config.set_transformer.num_seeds,
+            "ffn_dim": config.set_transformer.ffn_dim,
+            "positional_encoding": False,
+        }
 
     if config.encoder_mode == "lora":
         matches = _validate_lora_targets(encoder, config.lora.target_modules)
@@ -152,6 +290,7 @@ def build_model(
         dropout=config.dropout,
         architecture=config.architecture,
         attention_size=config.attention_size,
+        set_transformer=config.set_transformer,
     )
     trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
     total = sum(parameter.numel() for parameter in model.parameters())

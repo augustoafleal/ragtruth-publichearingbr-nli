@@ -11,7 +11,7 @@ PublicHearingBR:
 5. bootstrap pareado e agrupado para scores contínuos
 6. bootstrap pareado e agrupado para métricas thresholded
 
-A ablação compara `gated_attention`, `mean` e `max` no mesmo protocolo
+A ablação compara `gated_attention`, `mean`, `max` e `set_transformer` no mesmo protocolo
 RAGTruth → PublicHearingBR; ela é documentada em
 `docs/experiments/pooling-ablation.md`.
 
@@ -100,9 +100,10 @@ python scripts/run_ragtruth_confirmatory.py \
 
 ### Ablação de pooling
 
-As variantes Mean e Max usam os configs
-`configs/ragtruth_lora_mean_mil_confirmatory.yaml` e
-`configs/ragtruth_lora_max_mil_confirmatory.yaml`, respectivamente. Execute
+As variantes Mean, Max e Set Transformer usam, respectivamente,
+`configs/ragtruth_lora_mean_mil_confirmatory.yaml`,
+`configs/ragtruth_lora_max_mil_confirmatory.yaml` e
+`configs/ragtruth_lora_set_transformer_mil_confirmatory.yaml`. Execute
 `--validate-only`, `--phase train`, `--phase evaluate` e `--phase aggregate`
 para cada variante. As signatures e resultados canônicos estão em
 `docs/experiments/pooling-ablation.md`.

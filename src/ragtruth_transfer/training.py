@@ -239,13 +239,27 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> pd.Da
     return pd.DataFrame(rows)
 
 
-def optimizer_for_model(model: nn.Module, config: ExperimentConfig) -> torch.optim.Optimizer:
-    head_prefixes = ("projection", "classifier", "attention_v", "attention_u", "attention_w")
-    head_parameters, encoder_parameters = [], []
+def learning_rate_group_parameter_names(model: nn.Module) -> tuple[list[str], list[str]]:
+    """Return trainable (head, encoder) parameter names.
+
+    Everything outside ``encoder.*`` belongs to the trainable aggregation head.
+    This preserves the historical grouping for mean/max/Gated Attention while
+    ensuring new aggregators cannot accidentally receive the encoder/LoRA LR.
+    """
+
+    head_names, encoder_names = [], []
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
-        (head_parameters if name.startswith(head_prefixes) else encoder_parameters).append(parameter)
+        (encoder_names if name.startswith("encoder.") else head_names).append(name)
+    return head_names, encoder_names
+
+
+def optimizer_for_model(model: nn.Module, config: ExperimentConfig) -> torch.optim.Optimizer:
+    head_names, encoder_names = learning_rate_group_parameter_names(model)
+    parameters = dict(model.named_parameters())
+    head_parameters = [parameters[name] for name in head_names]
+    encoder_parameters = [parameters[name] for name in encoder_names]
     groups = [{"params": head_parameters, "lr": config.training.head_learning_rate}]
     if encoder_parameters:
         groups.append({"params": encoder_parameters, "lr": config.training.encoder_learning_rate})
