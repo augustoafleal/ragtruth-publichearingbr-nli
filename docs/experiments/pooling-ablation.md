@@ -101,10 +101,12 @@ python scripts/run_ragtruth_confirmatory.py \
 ```
 
 The existing Attention/Mean/Max paired bootstrap is frozen and intentionally
-does not include this campaign. A future Gated-versus-Set comparator must also
-resolve its historical naming mismatch: the current canonical Gated pooling
-name is `attention`, while that frozen bootstrap identifies its reference
-campaign as `gated_attention`.
+does not include this campaign. The separate [Gated Attention × Set
+Transformer paired bootstrap](set-transformer-paired-bootstrap.md) uses the
+existing zero-shot Parquets without modifying that frozen analysis. It resolves
+the historical naming mismatch locally: the canonical Gated pooling name is
+`attention` in some artifacts, while the frozen bootstrap identifies its
+reference campaign as `gated_attention`.
 
 ## Outputs
 
@@ -119,6 +121,7 @@ an ensemble. Thresholds are selected separately per pooling and seed on
 RAGTruth validation only, then frozen before RAGTruth test and
 PublicHearingBR zero-shot evaluation.
 
-The existing paired grouped bootstraps compare Gated Attention with the
-off-the-shelf NLI baseline; they do not estimate uncertainty between pooling
-variants. Pooling comparisons are therefore descriptive.
+The existing Attention/Mean/Max bootstrap remains frozen. The separate
+Gated-versus-Set analysis reports paired grouped uncertainty for that new
+comparison; its conclusion is limited to the PublicHearingBR zero-shot
+protocol and the specified three seeds.

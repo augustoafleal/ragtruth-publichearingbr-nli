@@ -15,6 +15,10 @@ A ablação compara `gated_attention`, `mean`, `max` e `set_transformer` no mesm
 RAGTruth → PublicHearingBR; ela é documentada em
 `docs/experiments/pooling-ablation.md`.
 
+The inferential Gated Attention × Set Transformer comparison is documented in
+`docs/experiments/set-transformer-paired-bootstrap.md` and uses only existing
+zero-shot prediction Parquets.
+
 Smoke tests, screening e preparação de dados não são resultados científicos
 principais.
 
