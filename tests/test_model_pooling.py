@@ -4,9 +4,14 @@ import torch
 import torch.nn as nn
 import yaml
 
-from ragtruth_transfer.config import ExperimentConfig
+from ragtruth_transfer.config import ExperimentConfig, SetTransformerSettings
 from ragtruth_transfer.ragtruth_confirmatory import ConfirmatoryConfig, _signature
-from ragtruth_transfer.modeling import HierarchicalEncoderClassifier
+from ragtruth_transfer.modeling import HierarchicalEncoderClassifier, head_state_dict, load_head_state
+from ragtruth_transfer.training import (
+    learning_rate_group_parameter_names,
+    optimizer_for_model,
+    scientific_fingerprint,
+)
 
 
 class DummyOutput:
@@ -60,6 +65,28 @@ def _deterministic_pooling_model(architecture: str) -> HierarchicalEncoderClassi
         model.classifier[1].weight.copy_(torch.tensor([[0.5, -0.25, 0.75]]))
         model.classifier[1].bias.copy_(torch.tensor([0.1]))
     return model
+
+
+def _set_transformer_model(dropout: float = 0.0) -> HierarchicalEncoderClassifier:
+    return HierarchicalEncoderClassifier(
+        encoder=FixedClsEncoder(),
+        hidden_size=3,
+        projection_size=128,
+        dropout=dropout,
+        architecture="set_transformer",
+        attention_size=2,
+        set_transformer=SetTransformerSettings(
+            num_sab_layers=1,
+            num_heads=4,
+            num_seeds=1,
+            ffn_dim=128,
+        ),
+    )
+
+
+def _set_lora_only_trainable(model: HierarchicalEncoderClassifier) -> None:
+    for name, parameter in model.encoder.named_parameters():
+        parameter.requires_grad_("lora_" in name)
 
 
 def _projected(model: HierarchicalEncoderClassifier, input_ids: torch.Tensor) -> torch.Tensor:
@@ -256,6 +283,82 @@ def test_all_poolings_produce_128_dimensional_representation_before_classifier()
         assert weights.shape == (3, 4)
 
 
+def test_set_transformer_produces_128_dimensional_representation_and_pma_weights():
+    torch.manual_seed(19)
+    model = _set_transformer_model().eval()
+    input_ids = torch.tensor([[
+        [1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12],
+    ]])
+    mask = torch.tensor([[True, True, False, True]])
+    pooled, logits, weights = _pooled_before_classifier(model, input_ids, mask)
+    assert pooled.shape == (1, 128)
+    assert logits.shape == (1,)
+    assert weights.shape == (1, 4)
+    assert torch.allclose(weights.sum(dim=1), torch.ones(1), atol=1e-6)
+    assert torch.equal(weights[~mask], torch.zeros_like(weights[~mask]))
+
+
+def test_set_transformer_is_invariant_to_joint_chunk_and_mask_permutation():
+    torch.manual_seed(23)
+    model = _set_transformer_model().eval()
+    input_ids = torch.tensor([[
+        [1, 2, 3], [4, 5, 6], [70, 70, 70], [7, 8, 9],
+    ]])
+    mask = torch.tensor([[True, True, False, True]])
+    permutation = torch.tensor([3, 2, 0, 1])
+    first_logits, first_weights = model(input_ids, torch.ones_like(input_ids), mask)
+    second_logits, second_weights = model(
+        input_ids[:, permutation],
+        torch.ones_like(input_ids[:, permutation]),
+        mask[:, permutation],
+    )
+    assert torch.allclose(first_logits, second_logits, atol=1e-6)
+    assert torch.allclose(second_weights, first_weights[:, permutation], atol=1e-6)
+
+
+def test_set_transformer_ignores_masked_slot_content():
+    torch.manual_seed(29)
+    model = _set_transformer_model().eval()
+    input_ids = torch.tensor([[
+        [1, 2, 3], [4, 5, 6], [70, 70, 70], [80, 80, 80],
+    ]])
+    changed = input_ids.clone()
+    changed[:, 2:, :] = -99
+    mask = torch.tensor([[True, True, False, False]])
+    first_logits, first_weights = model(input_ids, torch.ones_like(input_ids), mask)
+    second_logits, second_weights = model(changed, torch.ones_like(changed), mask)
+    assert torch.allclose(first_logits, second_logits, atol=1e-6)
+    assert torch.allclose(first_weights, second_weights, atol=1e-6)
+
+
+def test_set_transformer_gradients_reach_sab_pma_projection_and_classifier():
+    torch.manual_seed(31)
+    model = _set_transformer_model()
+    logits, _ = model(
+        torch.ones((2, 4, 3), dtype=torch.long),
+        torch.ones((2, 4, 3), dtype=torch.long),
+        torch.ones((2, 4), dtype=torch.bool),
+    )
+    torch.nn.functional.binary_cross_entropy_with_logits(logits, torch.tensor([0.0, 1.0])).backward()
+    for prefix in ("sab.", "pma.", "projection.", "classifier."):
+        gradients = [parameter.grad for name, parameter in model.named_parameters() if name.startswith(prefix)]
+        assert gradients and all(gradient is not None for gradient in gradients), prefix
+
+
+def test_set_transformer_head_state_round_trip(tmp_path: Path):
+    torch.manual_seed(37)
+    original = _set_transformer_model().eval()
+    path = tmp_path / "head.pt"
+    torch.save(head_state_dict(original), path)
+    restored = _set_transformer_model().eval()
+    load_head_state(restored, path)
+    assert all(
+        torch.equal(value, restored.state_dict()[name])
+        for name, value in original.state_dict().items()
+        if not name.startswith("encoder.")
+    )
+
+
 def test_confirmatory_pooling_configs_have_explicit_distinct_signatures():
     configs = [
         ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_lora_attention_mil_confirmatory.yaml")),
@@ -270,6 +373,53 @@ def test_confirmatory_pooling_configs_have_explicit_distinct_signatures():
         for config in configs
     }
     assert len(signatures) == 3
+
+
+def test_set_transformer_confirmatory_config_is_explicit_and_has_distinct_signature():
+    gated = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_lora_attention_mil_confirmatory.yaml"))
+    set_transformer = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_lora_set_transformer_mil_confirmatory.yaml"))
+    serialized = set_transformer.experiment.to_dict()
+    assert set_transformer.experiment.architecture == "set_transformer"
+    assert set_transformer.experiment.canonical_pooling_type == "set_transformer"
+    assert serialized["set_transformer"] == {
+        "num_sab_layers": 1, "num_heads": 4, "num_seeds": 1, "ffn_dim": 128,
+    }
+    assert _signature(set_transformer.protocol_payload("525edec2966a4fac")) != _signature(
+        gated.protocol_payload("525edec2966a4fac")
+    )
+    data_hashes = {"dataset": "d", "manifest": "m", "split": "s", "assignments": "a"}
+    set_fingerprint, _ = scientific_fingerprint(set_transformer.experiment, data_hashes, seed=0)
+    gated_fingerprint, _ = scientific_fingerprint(gated.experiment, data_hashes, seed=0)
+    assert set_fingerprint != gated_fingerprint
+
+
+def test_set_transformer_confirmatory_config_changes_only_aggregator_identity_and_settings():
+    gated = yaml.safe_load(Path("configs/ragtruth_lora_attention_mil_confirmatory.yaml").read_text())
+    set_transformer = yaml.safe_load(Path("configs/ragtruth_lora_set_transformer_mil_confirmatory.yaml").read_text())
+    for key in ("run_name", "architecture"):
+        gated.pop(key)
+        set_transformer.pop(key)
+    assert set_transformer.pop("pooling_type") == "set_transformer"
+    assert set_transformer.pop("set_transformer") == {
+        "num_sab_layers": 1, "num_heads": 4, "num_seeds": 1, "ffn_dim": 128,
+    }
+    assert set_transformer == gated
+
+
+def test_trainable_head_parameter_counts_are_explicit_for_gated_and_set_transformer():
+    gated = HierarchicalEncoderClassifier(
+        encoder=nn.Identity(), hidden_size=768, projection_size=128,
+        dropout=0.3, architecture="gated_attention", attention_size=64,
+    )
+    set_transformer = HierarchicalEncoderClassifier(
+        encoder=nn.Identity(), hidden_size=768, projection_size=128,
+        dropout=0.3, architecture="set_transformer", attention_size=64,
+        set_transformer=SetTransformerSettings(1, 4, 1, 128),
+    )
+    def count_head(model: nn.Module) -> int:
+        return sum(parameter.numel() for name, parameter in model.named_parameters() if not name.startswith("encoder."))
+    assert count_head(gated) == 115_137
+    assert count_head(set_transformer) == 297_857
 
 
 def test_attention_alias_normalizes_to_legacy_gated_attention():
@@ -291,3 +441,51 @@ def test_mean_and_max_confirmatory_configs_change_only_pooling_identity():
         assert variant.pop("architecture") == architecture
         assert variant.pop("pooling_type") == architecture
         assert variant == base
+
+
+def test_existing_architectures_keep_their_historical_learning_rate_group_membership():
+    old_head_prefixes = ("projection", "classifier", "attention_v", "attention_u", "attention_w")
+    for architecture in ("gated_attention", "mean", "max"):
+        model = HierarchicalEncoderClassifier(
+            encoder=DummyLoRAEncoder(),
+            hidden_size=4,
+            projection_size=3,
+            dropout=0.0,
+            architecture=architecture,
+            attention_size=2,
+        )
+        _set_lora_only_trainable(model)
+        head, encoder = learning_rate_group_parameter_names(model)
+        expected_head = [
+            name for name, parameter in model.named_parameters()
+            if parameter.requires_grad and name.startswith(old_head_prefixes)
+        ]
+        expected_encoder = [
+            name for name, parameter in model.named_parameters()
+            if parameter.requires_grad and not name.startswith(old_head_prefixes)
+        ]
+        assert head == expected_head
+        assert encoder == expected_encoder == ["encoder.lora_adapter.weight"]
+
+
+def test_set_transformer_parameters_use_head_learning_rate_and_lora_uses_encoder_rate():
+    config = ExperimentConfig.from_mapping({
+        "run_name": "set", "model_id": "dummy", "architecture": "set_transformer",
+        "pooling_type": "set_transformer",
+        "projection_size": 128,
+        "set_transformer": {"num_sab_layers": 1, "num_heads": 4, "num_seeds": 1, "ffn_dim": 128},
+        "training": {"head_learning_rate": 5e-4, "encoder_learning_rate": 2e-4},
+    })
+    model = HierarchicalEncoderClassifier(
+        encoder=DummyLoRAEncoder(), hidden_size=4, projection_size=128,
+        dropout=0.0, architecture="set_transformer", attention_size=2,
+        set_transformer=config.set_transformer,
+    )
+    _set_lora_only_trainable(model)
+    head, encoder = learning_rate_group_parameter_names(model)
+    assert any(name.startswith("sab.") for name in head)
+    assert any(name.startswith("pma.") for name in head)
+    assert encoder == ["encoder.lora_adapter.weight"]
+    optimizer = optimizer_for_model(model, config)
+    assert optimizer.param_groups[0]["lr"] == 5e-4
+    assert optimizer.param_groups[1]["lr"] == 2e-4

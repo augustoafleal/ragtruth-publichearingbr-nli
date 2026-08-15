@@ -63,7 +63,7 @@ not create an ensemble.
 
 ## Controlled pooling ablation
 
-The legacy Gated Attention campaign is also compared with Mean and Max pooling
-under the same frozen RAGTruth-to-PublicHearingBR protocol. See
+The legacy Gated Attention campaign is also compared with Mean, Max, and Set
+Transformer pooling under the same frozen RAGTruth-to-PublicHearingBR protocol. See
 [Pooling ablation](pooling-ablation.md) for the variant configurations,
 signatures, results, and scope of the comparison.

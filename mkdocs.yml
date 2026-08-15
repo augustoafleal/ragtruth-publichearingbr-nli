@@ -51,6 +51,7 @@ nav:
       - PublicHearingBR supervised: experiments/publichearingbr-supervised.md
       - RAGTruth confirmatory: experiments/ragtruth-confirmatory.md
       - Pooling ablation: experiments/pooling-ablation.md
+      - Set Transformer paired bootstrap: experiments/set-transformer-paired-bootstrap.md
       - Off the shelf NLI baseline: experiments/off-the-shelf-nli.md
       - Threshold transfer: experiments/threshold-transfer.md
       - Continuous paired bootstrap: experiments/continuous-bootstrap.md

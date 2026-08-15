@@ -16,6 +16,26 @@ class LoRASettings:
 
 
 @dataclass(frozen=True)
+class SetTransformerSettings:
+    """Fixed Set Transformer aggregation contract for four evidence slots."""
+
+    num_sab_layers: int
+    num_heads: int
+    num_seeds: int
+    ffn_dim: int
+
+    def __post_init__(self) -> None:
+        if self.num_sab_layers != 1:
+            raise ValueError("set_transformer.num_sab_layers deve ser 1")
+        if self.num_heads != 4:
+            raise ValueError("set_transformer.num_heads deve ser 4")
+        if self.num_seeds != 1:
+            raise ValueError("set_transformer.num_seeds deve ser 1")
+        if self.ffn_dim != 128:
+            raise ValueError("set_transformer.ffn_dim deve ser 128")
+
+
+@dataclass(frozen=True)
 class TrainingSettings:
     train_batch_size: int
     eval_batch_size: int
@@ -97,6 +117,7 @@ class ExperimentConfig:
     dataset: DatasetSettings = field(default_factory=DatasetSettings)
     output_root: Path | None = None
     pooling_type: str | None = None
+    set_transformer: SetTransformerSettings | None = None
 
     @property
     def canonical_pooling_type(self) -> str:
@@ -111,7 +132,7 @@ class ExperimentConfig:
         pooling_type: str | None = None
         if raw_pooling_type is not None:
             pooling_type = str(raw_pooling_type)
-            if pooling_type not in {"attention", "mean", "max"}:
+            if pooling_type not in {"attention", "mean", "max", "set_transformer"}:
                 raise ValueError(f"pooling_type inválido: {pooling_type}")
             expected_architecture = (
                 "gated_attention" if pooling_type == "attention" else pooling_type
@@ -127,7 +148,7 @@ class ExperimentConfig:
             pooling_type = "attention"
         elif architecture in {"mean", "max"}:
             pooling_type = architecture
-        if architecture not in {"mean", "max", "gated_attention"}:
+        if architecture not in {"mean", "max", "gated_attention", "set_transformer"}:
             raise ValueError(f"Arquitetura inválida: {architecture}")
         encoder_mode = str(raw.get("encoder_mode", "lora"))
         if encoder_mode not in {"lora", "frozen"}:
@@ -136,6 +157,21 @@ class ExperimentConfig:
         lora_raw = raw.get("lora", {})
         training_raw = raw["training"]
         dataset_raw = raw.get("dataset", {})
+        set_transformer_raw = raw.get("set_transformer")
+        set_transformer: SetTransformerSettings | None = None
+        if architecture == "set_transformer":
+            if not isinstance(set_transformer_raw, dict):
+                raise ValueError("set_transformer deve ser um mapa para architecture=set_transformer")
+            set_transformer = SetTransformerSettings(
+                num_sab_layers=int(set_transformer_raw.get("num_sab_layers", 1)),
+                num_heads=int(set_transformer_raw.get("num_heads", 4)),
+                num_seeds=int(set_transformer_raw.get("num_seeds", 1)),
+                ffn_dim=int(set_transformer_raw.get("ffn_dim", 128)),
+            )
+            if int(raw.get("projection_size", 128)) != set_transformer.ffn_dim:
+                raise ValueError("set_transformer.ffn_dim deve ser igual a projection_size")
+        elif set_transformer_raw is not None:
+            raise ValueError("set_transformer só é aceito com architecture=set_transformer")
 
         def resolve(value: Any) -> Path | None:
             if value is None:
@@ -215,6 +251,7 @@ class ExperimentConfig:
             ),
             output_root=resolve(raw.get("output_root")),
             pooling_type=pooling_type,
+            set_transformer=set_transformer,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -227,6 +264,18 @@ class ExperimentConfig:
             **(
                 {"pooling_type": self.canonical_pooling_type}
                 if self.pooling_type is not None
+                else {}
+            ),
+            **(
+                {
+                    "set_transformer": {
+                        "num_sab_layers": self.set_transformer.num_sab_layers,
+                        "num_heads": self.set_transformer.num_heads,
+                        "num_seeds": self.set_transformer.num_seeds,
+                        "ffn_dim": self.set_transformer.ffn_dim,
+                    }
+                }
+                if self.set_transformer is not None
                 else {}
             ),
             "encoder_mode": self.encoder_mode,

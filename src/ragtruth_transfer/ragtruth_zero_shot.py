@@ -190,7 +190,7 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
         raise ValueError("Checkpoint não pertence à divisão RAGTruth esperada.")
     if str(run_config_raw.get("model_revision")) != config.expected_model_revision:
         raise ValueError("Revisão do modelo no run não está fixada conforme configuração.")
-    if run_config_raw.get("architecture") not in {"gated_attention", "mean", "max", "attention"} or run_config_raw.get("encoder_mode") != "lora":
+    if run_config_raw.get("architecture") not in {"gated_attention", "mean", "max", "attention", "set_transformer"} or run_config_raw.get("encoder_mode") != "lora":
         raise ValueError("Checkpoint não é um modelo LoRA com pooling suportado.")
     model_config = ExperimentConfig.from_mapping(run_config_raw)
     if model_config.max_length != int(run_config_raw.get("max_length", 512)):
@@ -422,7 +422,7 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
     stage = output_dir.parent / f".{output_dir.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}"
     stage.mkdir(parents=True, exist_ok=False)
     try:
-        predictions = pd.DataFrame({"example_id": ids, "hearing_id": [str(row["hearing_id"]) for row in rows], "label": labels.astype(int), "probability": scores, "prediction_ragtruth_best_f1": scores >= thresholds["f1"]["threshold"], "prediction_ragtruth_fpr10": scores >= thresholds["fpr10"]["threshold"], "ragtruth_best_f1_threshold": thresholds["f1"]["threshold"], "ragtruth_fpr10_threshold": thresholds["fpr10"]["threshold"], "model_run_signature": str(run_manifest.get("signature") or run_manifest.get("config_fingerprint")), "checkpoint_hash": checkpoint_hash, "publichearing_dataset_signature": config.publichearing_dataset_sha256 or dataset_hash})
+        predictions = pd.DataFrame({"example_id": ids, "hearing_id": [str(row["hearing_id"]) for row in rows], "label": labels.astype(int), "probability": scores, "seed": int(config.seed), "prediction_ragtruth_best_f1": scores >= thresholds["f1"]["threshold"], "prediction_ragtruth_fpr10": scores >= thresholds["fpr10"]["threshold"], "ragtruth_best_f1_threshold": thresholds["f1"]["threshold"], "ragtruth_fpr10_threshold": thresholds["fpr10"]["threshold"], "model_run_signature": str(run_manifest.get("signature") or run_manifest.get("config_fingerprint")), "checkpoint_hash": checkpoint_hash, "publichearing_dataset_signature": config.publichearing_dataset_sha256 or dataset_hash})
         predictions.to_parquet(stage / "predictions.parquet", index=False)
         metrics = {"protocol": "preliminary exploratory zero-shot diagnostic", "N": int(len(labels)), "prevalence": float(labels.mean()), "average_predicted_probability": float(scores.mean()), "probability_by_label": {"0": {"N": int((~labels).sum()), "mean": float(scores[~labels].mean())}, "1": {"N": int(labels.sum()), "mean": float(scores[labels].mean())}}, "threshold_free": {"AUPRC": float(average_precision_score(labels, scores)), "AUROC": float(roc_auc_score(labels, scores)), "Brier": float(brier_score_loss(labels, scores))}, "ragtruth_validation_best_f1_threshold": _metric_payload(labels, scores, thresholds["f1"]["threshold"]), "ragtruth_validation_fpr10_threshold": _metric_payload(labels, scores, thresholds["fpr10"]["threshold"])}
         write_json(stage / "metrics.json", metrics)
