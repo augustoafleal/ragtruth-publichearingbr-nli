@@ -40,3 +40,9 @@ python scripts/build_ragtruth_training_view.py \
 The confirmatory campaign expects the deduplicated Parquet dataset and manifest
 under `results/ragtruth_qa_training_view/<policy>/<signature>/`. Verify the
 expected signature in the confirmatory configuration before training.
+
+## Optional Portuguese translation
+
+To create Portuguese RAGTruth variants for a translation-based preparation
+run, see [RAGTruth translation](ragtruth-translation.md). The translation step
+uses the processed JSONL dataset and does not alter the training pipeline.

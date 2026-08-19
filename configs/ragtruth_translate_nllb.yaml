@@ -1,0 +1,20 @@
+translation:
+  translator: nllb
+  model_name: facebook/nllb-200-distilled-600M
+  source_language: eng_Latn
+  target_language: por_Latn
+  batch_size: 16
+  num_beams: 4
+  max_input_tokens: 480
+  max_new_tokens: 512
+  device: auto
+
+data:
+  input_dir: ../data/processed/ragtruth_textual
+  output_dir: ../data/processed/ragtruth_textual_pt_nllb
+  splits:
+    - train
+    - validation
+    - test
+  sample_fraction: 1.0
+  sample_seed: 42

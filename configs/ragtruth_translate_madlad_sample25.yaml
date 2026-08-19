@@ -1,0 +1,20 @@
+translation:
+  translator: madlad
+  model_name: google/madlad400-3b-mt
+  source_language: en
+  target_language: pt
+  batch_size: 1
+  num_beams: 2
+  max_input_tokens: 480
+  max_new_tokens: 512
+  device: auto
+
+data:
+  input_dir: ../data/processed/ragtruth_textual
+  output_dir: ../data/processed/ragtruth_textual_pt_madlad_sample25
+  splits:
+    - train
+    - validation
+    - test
+  sample_fraction: 0.25
+  sample_seed: 42
