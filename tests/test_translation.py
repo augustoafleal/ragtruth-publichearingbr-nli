@@ -125,12 +125,15 @@ def test_yaml_selects_nllb_and_madlad_defaults() -> None:
     assert madlad.translation.translator == "madlad"
     assert madlad.translation.target_language == "pt"
     assert madlad.sample_fraction == 1.0 and madlad.sample_seed == 42
+    assert madlad.translation.batch_size == 1 and madlad.translation.num_beams == 2
     assert madlad_sample25.translation.translator == "madlad"
     assert madlad_sample25.sample_fraction == 0.25 and madlad_sample25.sample_seed == 42
     assert madlad_sample25.output_dir.name.endswith("sample25")
+    assert madlad_sample25.translation.batch_size == 1 and madlad_sample25.translation.num_beams == 2
     assert nllb_smoke.max_examples_per_split == 3
     assert nllb_smoke.output_dir.name.endswith("_smoke")
     assert madlad_smoke.max_examples_per_split == 3
+    assert madlad_smoke.translation.batch_size == 1 and madlad_smoke.translation.num_beams == 2
 
 
 def test_unknown_translator_fails_clearly() -> None:

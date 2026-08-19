@@ -4,7 +4,7 @@ translation:
   source_language: en
   target_language: pt
   batch_size: 1
-  num_beams: 4
+  num_beams: 2
   max_input_tokens: 480
   max_new_tokens: 512
   device: auto

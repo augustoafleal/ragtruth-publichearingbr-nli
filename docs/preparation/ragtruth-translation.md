@@ -65,6 +65,10 @@ python scripts/translate_ragtruth.py \
 This output is written separately to
 `data/processed/ragtruth_textual_pt_madlad_sample25/`.
 
+The MADLAD configs use `batch_size: 1` and `num_beams: 2` as a conservative
+GPU-memory setting for 16 GB GPUs. Full translation will therefore take longer
+but uses the same model and text-selection pipeline.
+
 The normal configs set `data.sample_fraction: 1.0` and
 `data.sample_seed: 42`, which processes every record in each configured split.
 The outputs are:
