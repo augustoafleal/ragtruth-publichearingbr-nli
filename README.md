@@ -71,6 +71,52 @@ python scripts/build_ragtruth_training_view.py \
   --output-root results/ragtruth_qa_training_view
 ```
 
+## Tradução do RAGTruth para português
+
+O pipeline de tradução lê os JSONL processados em
+`data/processed/ragtruth_textual` e mantém os mesmos splits, ordem e schema.
+Somente `claim` e as evidências com `evidence_mask: true` são traduzidos; os
+demais campos e slots mascarados são preservados.
+
+NLLB:
+
+```bash
+python scripts/translate_ragtruth.py \
+  --config configs/ragtruth_translate_nllb.yaml
+```
+
+MADLAD:
+
+```bash
+python scripts/translate_ragtruth.py \
+  --config configs/ragtruth_translate_madlad.yaml
+```
+
+Antes de uma campanha no cluster, há smoke configs que processam no máximo
+3 registros por split:
+
+```bash
+python scripts/translate_ragtruth.py \
+  --config configs/ragtruth_translate_nllb_smoke.yaml
+
+python scripts/translate_ragtruth.py \
+  --config configs/ragtruth_translate_madlad_smoke.yaml
+```
+
+As configs normais usam `sample_fraction: 1.0` (100%) e `sample_seed: 42`.
+Para uma amostra determinística, altere a fração para, por exemplo,
+`0.25` (25% de cada split). Smoke e sampling são opções distintas e não
+podem ser configurados juntos; cada smoke output usa um diretório separado.
+
+Os outputs são, respectivamente, `data/processed/ragtruth_textual_pt_nllb`
+e `data/processed/ragtruth_textual_pt_madlad`. O device é escolhido por
+`device: auto` (CUDA quando disponível, caso contrário CPU); ele pode ser
+alterado para `cpu` ou `cuda` no YAML. Um cache SQLite persistente fica junto
+ao output e é reutilizado automaticamente após interrupções. Ele é validado
+contra o modelo, parâmetros de geração e hashes dos inputs, evitando misturas
+entre configurações incompatíveis. O `manifest.json` registra a configuração,
+splits e contagens da execução concluída.
+
 ## Experimentos canônicos
 
 ### PublicHearingBR supervisionado

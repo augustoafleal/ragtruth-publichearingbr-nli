@@ -60,4 +60,5 @@ nav:
       - Overview: preparation/index.md
       - Environment: preparation/environment.md
       - RAGTruth data: preparation/ragtruth-data.md
+      - RAGTruth translation: preparation/ragtruth-translation.md
       - PublicHearingBR data: preparation/publichearingbr-data.md
