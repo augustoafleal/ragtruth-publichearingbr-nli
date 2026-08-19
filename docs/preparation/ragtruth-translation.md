@@ -55,6 +55,16 @@ python scripts/translate_ragtruth.py \
   --config configs/ragtruth_translate_madlad.yaml
 ```
 
+MADLAD with a deterministic 25% sample of the dataset:
+
+```bash
+python scripts/translate_ragtruth.py \
+  --config configs/ragtruth_translate_madlad_sample25.yaml
+```
+
+This output is written separately to
+`data/processed/ragtruth_textual_pt_madlad_sample25/`.
+
 The normal configs set `data.sample_fraction: 1.0` and
 `data.sample_seed: 42`, which processes every record in each configured split.
 The outputs are:

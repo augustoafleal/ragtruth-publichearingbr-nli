@@ -116,6 +116,7 @@ def _write_many_input(config: TranslationConfig, rows_per_split: int = 8) -> Non
 def test_yaml_selects_nllb_and_madlad_defaults() -> None:
     nllb = TranslationConfig.from_yaml(Path("configs/ragtruth_translate_nllb.yaml"))
     madlad = TranslationConfig.from_yaml(Path("configs/ragtruth_translate_madlad.yaml"))
+    madlad_sample25 = TranslationConfig.from_yaml(Path("configs/ragtruth_translate_madlad_sample25.yaml"))
     nllb_smoke = TranslationConfig.from_yaml(Path("configs/ragtruth_translate_nllb_smoke.yaml"))
     madlad_smoke = TranslationConfig.from_yaml(Path("configs/ragtruth_translate_madlad_smoke.yaml"))
     assert nllb.translation.translator == "nllb"
@@ -124,6 +125,9 @@ def test_yaml_selects_nllb_and_madlad_defaults() -> None:
     assert madlad.translation.translator == "madlad"
     assert madlad.translation.target_language == "pt"
     assert madlad.sample_fraction == 1.0 and madlad.sample_seed == 42
+    assert madlad_sample25.translation.translator == "madlad"
+    assert madlad_sample25.sample_fraction == 0.25 and madlad_sample25.sample_seed == 42
+    assert madlad_sample25.output_dir.name.endswith("sample25")
     assert nllb_smoke.max_examples_per_split == 3
     assert nllb_smoke.output_dir.name.endswith("_smoke")
     assert madlad_smoke.max_examples_per_split == 3
