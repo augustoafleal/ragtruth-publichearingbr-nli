@@ -538,6 +538,8 @@ def train_run(
     max_validation_sources: int | None = None,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    if config.dataset.format == "jsonl" and data_dir is None:
+        data_dir = config.dataset.path
     planned_total_epochs = config.training.planned_total_epochs
     stop_after = stop_after_epoch if stop_after_epoch is not None else config.training.stop_after_epoch
     if stop_after is None:
