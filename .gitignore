@@ -150,6 +150,9 @@ venv.bak/
 dmypy.json
 results/
 
+/data/
+/artifacts/
+
 # Project-generated experiment caches and local training runs.
 # Source code, configs and tests remain trackable; full results are already
 # covered by the results/ rule above.

@@ -24,7 +24,7 @@ from .metrics import binary_metrics, select_threshold
 from .modeling import build_model, load_head_state
 from .ragtruth_parquet import load_ragtruth_parquet, split_ragtruth_parquet
 from .ragtruth_zero_shot import ZeroShotConfig, load_zero_shot_config, run_zero_shot
-from .training import make_loader, predict, prepare_training_data, train_run
+from .training import make_loader, predict, prepare_training_data, train_run, validate_training_data
 
 CONFIRMATORY_SCHEMA = "ragtruth-confirmatory-three-seed-v1"
 
@@ -61,8 +61,8 @@ class ConfirmatoryConfig:
         if evaluation.get("evaluate_test_during_training", False) or evaluation.get("evaluate_publichearing_during_training", False):
             raise ValueError("O treino confirmatório não pode avaliar test/PublicHearing.")
         experiment = ExperimentConfig.from_mapping(raw, base_dir=base)
-        if experiment.dataset.format != "parquet" or experiment.dataset.evaluate_test:
-            raise ValueError("A configuração confirmatória deve usar Parquet e evaluate_test=false.")
+        if experiment.dataset.format not in {"parquet", "jsonl"} or experiment.dataset.evaluate_test:
+            raise ValueError("A configuração confirmatória deve usar Parquet/JSONL e evaluate_test=false.")
         seeds = tuple(int(seed) for seed in campaign.get("seeds", [0, 1, 2]))
         if seeds != (0, 1, 2):
             raise ValueError("A campanha confirmatória exige exatamente seeds [0, 1, 2].")
@@ -111,7 +111,7 @@ class ConfirmatoryConfig:
             scientific_config.pop("run_name", None)
         dataset_config = scientific_config.get("dataset", {})
         if isinstance(dataset_config, dict):
-            dataset_config["path"] = "dataset.parquet"
+            dataset_config["path"] = "dataset.parquet" if self.experiment.dataset.format == "parquet" else "dataset.jsonl"
             dataset_config["manifest_path"] = "manifest.json"
         payload = {
             "schema": CONFIRMATORY_SCHEMA,
@@ -157,6 +157,55 @@ def _validate_data(config: ConfirmatoryConfig) -> tuple[dict[str, Any], str]:
     path = config.experiment.dataset.path
     if path is None:
         raise ValueError("dataset.path ausente")
+    if config.experiment.dataset.format == "jsonl":
+        if not path.is_dir():
+            raise ValueError(f"dataset.path JSONL deve ser um diretório: {path}")
+        manifest_path = config.experiment.dataset.manifest_path or (path / "manifest.json")
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"Manifesto JSONL não encontrado: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or manifest.get("status") != "completed":
+            raise ValueError("Manifesto JSONL ausente, inválido ou não concluído.")
+        if manifest.get("schema_version") != config.expected_schema:
+            raise ValueError("Schema do dataset JSONL não coincide com o protocolo confirmatório.")
+        if manifest.get("run_signature") != config.expected_dataset_signature:
+            raise ValueError("Assinatura do dataset JSONL não coincide com o protocolo confirmatório.")
+        output_hashes = manifest.get("output_hashes")
+        if not isinstance(output_hashes, dict):
+            raise ValueError("Manifesto JSONL não contém output_hashes.")
+        for split in ("train", "validation", "test"):
+            split_path = path / f"{split}.jsonl"
+            if not split_path.is_file() or sha256_file(split_path) != str(output_hashes.get(split)):
+                raise ValueError(f"Hash do split JSONL divergente: {split}")
+        dataset_sha256 = str(manifest.get("dataset_sha256", ""))
+        split_signature = str(manifest.get("split_signature", ""))
+        if dataset_sha256 != config.expected_dataset_sha256:
+            raise ValueError("SHA-256 agregado do dataset JSONL não coincide com o protocolo confirmatório.")
+        if split_signature != config.expected_split_signature:
+            raise ValueError(f"Assinatura da divisão divergente: {split_signature}")
+        validation = validate_training_data(config.experiment, path)
+        expected_counts = manifest.get("counts", {}).get("per_split", {})
+        for split in ("train", "validation", "test"):
+            expected = expected_counts.get(split, {}).get("remaining_examples")
+            actual = validation["partitions"][split]["examples"]
+            if expected is None or int(expected) != int(actual):
+                raise ValueError(f"Contagem do split JSONL divergente em {split}: {actual} != {expected}")
+        metadata = {
+            "dataset_format": "jsonl",
+            "path": str(path.resolve()),
+            "manifest_path": str(manifest_path.resolve()),
+            "dataset_sha256": dataset_sha256,
+            "signature": str(manifest["run_signature"]),
+            "schema_version": str(manifest["schema_version"]),
+            "output_hashes": output_hashes,
+        }
+        audit = {
+            "metadata": metadata,
+            "split": {"strategy": "precomputed_jsonl_split", "signature": split_signature, "seed": config.split_seed},
+            "partitions": validation["partitions"],
+            "rows": sum(item["examples"] for item in validation["partitions"].values()),
+        }
+        return audit, split_signature
     rows, metadata = load_ragtruth_parquet(path, manifest_path=config.experiment.dataset.manifest_path, expected_signature=config.expected_dataset_signature, expected_schema=config.expected_schema, claim_column=config.experiment.dataset.claim_column, chunk_columns=config.experiment.dataset.chunk_columns, evidence_mask_column=config.experiment.dataset.evidence_mask_column, label_column=config.experiment.dataset.label_column, group_column=config.experiment.dataset.group_column, split_column=config.experiment.dataset.split_column)
     if metadata["dataset_sha256"] != config.expected_dataset_sha256:
         raise ValueError("SHA-256 do dataset não coincide com o protocolo confirmatório.")

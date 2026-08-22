@@ -1,0 +1,75 @@
+run_name: ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory
+output_root: ../runs/ragtruth_pt_nllb_filtered_confirmatory
+model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+architecture: gated_attention
+encoder_mode: lora
+max_length: 512
+projection_size: 128
+attention_size: 64
+dropout: 0.30
+gradient_checkpointing: true
+
+dataset:
+  format: jsonl
+  path: ../data/processed/ragtruth_textual_pt_nllb_filtered
+  manifest_path: ../data/processed/ragtruth_textual_pt_nllb_filtered/manifest.json
+  expected_signature: 3d37a08e94ba16c4ee3ae35e071bde51d5dfafa5090a3e5f78428b3835937c01
+  expected_schema: ragtruth-translated-filtered-v1
+  claim_column: claim
+  chunk_columns: [chunk_1, chunk_2, chunk_3, chunk_4]
+  evidence_mask_column: evidence_mask
+  label_column: label
+  group_column: source_id
+  split_column: split
+  validation_fraction: 0.15
+  split_seed: 42
+  evaluate_test: false
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.10
+  target_modules: [query_proj, value_proj]
+
+training:
+  train_batch_size: 1
+  eval_batch_size: 4
+  gradient_accumulation_steps: 16
+  head_learning_rate: 5.0e-4
+  encoder_learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.10
+  max_epochs: 6
+  planned_total_epochs: 6
+  early_stopping_patience: 2
+  max_grad_norm: 1.0
+  class_weight:
+    mode: auto_pos_weight
+  task_balanced_sampler: true
+  num_workers: 0
+  save_epoch_checkpoints: true
+
+campaign:
+  seeds: [0, 1, 2]
+  split_seed: 42
+  max_epochs: 6
+  early_stopping_patience: 2
+  selection_metric: validation_AUPRC
+  selection_mode: max
+  bootstrap_repetitions: 2000
+  bootstrap_seed: 4242
+
+evaluation:
+  evaluate_test_during_training: false
+  evaluate_publichearing_during_training: false
+
+expected_dataset_sha256: 8a149a6826f27fd65c607f292b9c92b6707a9ac4b8a6d1d14b2240beed02df7b
+expected_dataset_signature: 3d37a08e94ba16c4ee3ae35e071bde51d5dfafa5090a3e5f78428b3835937c01
+expected_schema: ragtruth-translated-filtered-v1
+expected_split_signature: 4e943a1c2cbab873
+zero_shot_config: ../configs/ragtruth_pt_nllb_filtered_to_publichearing_zero_shot.yaml
+reference_dir: ../results/publichearing_lora_attention_mil/741ed3152c2175e7
+protocol_name: ragtruth_pt_nllb_filtered_confirmatory
+
+filter_config: ../notebooks/configs/ragtruth_translation_qa.example.yaml

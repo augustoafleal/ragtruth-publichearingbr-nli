@@ -14,6 +14,35 @@ Build the RAGTruth training view before this experiment. See
 The confirmatory configuration records the expected Parquet dataset and grouped
 split. Verify both values in the resolved configuration before training.
 
+## Portuguese NLLB condition
+
+`configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml` keeps
+the same model, LoRA settings, seeds, optimizer, epochs, validation metric and
+evaluation protocol, while selecting only the filtered Portuguese JSONL
+directory. The filter manifest is frozen by its input hashes, aggregate dataset
+hash and split signature. It currently contains 45,238 train, 8,143 validation
+and 9,121 test examples.
+
+The one-shot wrapper validates/reuses the filtered dataset and then starts
+training:
+
+```bash
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml \
+  --dry-run
+
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
+```
+
+Use `--force-filter` only when intentionally rebuilding the filtered output.
+The validation-only command does not download model weights, initialize CUDA,
+or execute training. The training phase uses RAGTruth validation only for
+checkpoint/threshold selection; RAGTruth test and PublicHearingBR zero-shot
+evaluation remain downstream phases. The PT companion zero-shot config uses
+the relative path `data/PublicHearingBR_NLI.jsonl`; stage that dataset before
+the evaluation phase.
+
 ## Run
 
 Script: `scripts/run_ragtruth_confirmatory.py`

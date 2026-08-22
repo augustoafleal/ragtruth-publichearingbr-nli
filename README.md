@@ -148,6 +148,29 @@ python scripts/run_ragtruth_confirmatory.py \
   --phase aggregate
 ```
 
+### RAGTruth PT NLLB filtrado
+
+Esta condição reutiliza a mesma arquitetura/protocolo confirmatório, mas aponta
+exclusivamente para `data/processed/ragtruth_textual_pt_nllb_filtered`. O
+wrapper valida ou reutiliza o filtro antes de iniciar as três seeds; o
+`--dry-run` não carrega pesos nem treina:
+
+```bash
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml \
+  --dry-run
+
+# No cluster, depois da validação:
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
+```
+
+Após o treino, use o mesmo fluxo de seleção/evaluation/aggregation, trocando
+apenas a configuração pelo arquivo PT. O teste RAGTruth e o zero-shot
+PublicHearingBR só são executados na fase `evaluate`, depois da seleção por
+`validation_AUPRC`; nenhum deles é usado durante o treino. Para a avaliação
+externa, disponibilize o PublicHearingBR em `data/PublicHearingBR_NLI.jsonl`.
+
 ### Ablação de pooling
 
 As variantes Mean, Max e Set Transformer usam, respectivamente,
