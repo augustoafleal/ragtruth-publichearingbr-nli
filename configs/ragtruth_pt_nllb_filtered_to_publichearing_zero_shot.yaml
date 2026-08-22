@@ -8,7 +8,7 @@ expected_ragtruth_schema: ragtruth-translated-filtered-v1
 expected_ragtruth_split_signature: 4e943a1c2cbab873
 expected_best_epoch: 3
 expected_model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
-publichearing_path: ../data/PublicHearingBR_NLI.jsonl
+publichearing_path: ~/.cache/huggingface/hub/datasets--unicamp-dl--PublicHearingBR/snapshots/2f84a44bc34df483e25c987f0ff86caad0ab3433/PublicHearingBR_NLI.jsonl
 publichearing_dataset_sha256: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
 publichearing_dataset_revision: 2f84a44bc34df483e25c987f0ff86caad0ab3433
 expected_publichearing_examples: 4235
