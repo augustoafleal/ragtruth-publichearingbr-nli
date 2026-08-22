@@ -35,12 +35,12 @@ python scripts/run_ragtruth_pt_nllb_experiment.py \
   --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
 ```
 
-Use `--force-filter` only when intentionally rebuilding the filtered output.
+Use `--force-filter` only when you want to rebuild the filtered output.
 The validation-only command does not download model weights, initialize CUDA,
-or execute training. The training phase uses RAGTruth validation only for
-checkpoint/threshold selection; RAGTruth test and PublicHearingBR zero-shot
-evaluation remain downstream phases. The PT companion zero-shot config uses
-the relative path `data/PublicHearingBR_NLI.jsonl`; stage that dataset before
+or start training. During training, RAGTruth validation is used to select
+checkpoints and thresholds. RAGTruth test and PublicHearingBR zero-shot
+evaluation run only afterward. The PT zero-shot configuration expects the
+dataset at `data/PublicHearingBR_NLI.jsonl`. Make sure it is available before
 the evaluation phase.
 
 ## Run
