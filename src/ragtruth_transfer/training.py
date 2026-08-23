@@ -235,7 +235,7 @@ def make_loader(
         sampler=sampler,
         generator=generator,
         num_workers=config.training.num_workers,
-        collate_fn=BagCollator(tokenizer, config.max_length),
+        collate_fn=BagCollator(tokenizer, config.max_length, config.truncation),
         pin_memory=torch.cuda.is_available(),
     )
 

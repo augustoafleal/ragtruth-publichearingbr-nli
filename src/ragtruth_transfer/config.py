@@ -118,6 +118,11 @@ class ExperimentConfig:
     output_root: Path | None = None
     pooling_type: str | None = None
     set_transformer: SetTransformerSettings | None = None
+    truncation: str = "only_first"
+
+    def __post_init__(self) -> None:
+        if self.truncation not in {"only_first", "longest_first"}:
+            raise ValueError("truncation deve ser only_first ou longest_first")
 
     @property
     def canonical_pooling_type(self) -> str:
@@ -252,6 +257,7 @@ class ExperimentConfig:
             output_root=resolve(raw.get("output_root")),
             pooling_type=pooling_type,
             set_transformer=set_transformer,
+            truncation=str(raw.get("truncation", "only_first")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -280,6 +286,7 @@ class ExperimentConfig:
             ),
             "encoder_mode": self.encoder_mode,
             "max_length": self.max_length,
+            **({"truncation": self.truncation} if self.truncation != "only_first" else {}),
             "projection_size": self.projection_size,
             "attention_size": self.attention_size,
             "dropout": self.dropout,

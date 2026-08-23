@@ -5,6 +5,7 @@ model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
 architecture: gated_attention
 encoder_mode: lora
 max_length: 512
+truncation: longest_first
 projection_size: 128
 attention_size: 64
 dropout: 0.30

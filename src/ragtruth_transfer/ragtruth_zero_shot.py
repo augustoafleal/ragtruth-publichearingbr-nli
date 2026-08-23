@@ -327,8 +327,8 @@ def _load_publichearing_labels(path: Path, expected_ids: list[str], expected_pos
 
 
 @torch.inference_mode()
-def _infer(model: torch.nn.Module, tokenizer: Any, rows: list[dict[str, Any]], batch_size: int, max_length: int, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
-    loader = DataLoader(rows, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=BagCollator(tokenizer, max_length), pin_memory=device.type == "cuda")
+def _infer(model: torch.nn.Module, tokenizer: Any, rows: list[dict[str, Any]], batch_size: int, max_length: int, truncation: str, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
+    loader = DataLoader(rows, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=BagCollator(tokenizer, max_length, truncation), pin_memory=device.type == "cuda")
     probabilities: list[np.ndarray] = []
     pooling_weights: list[np.ndarray] = []
     model.eval()
@@ -411,7 +411,7 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
         parameter.requires_grad_(False)
     model.to(device).eval()
     before = _json_hash({key: value.detach().cpu().numpy().tobytes().hex() for key, value in model.state_dict().items()})
-    scores, pooling_weights = _infer(model, tokenizer, rows, config.batch_size, model_config.max_length, device)
+    scores, pooling_weights = _infer(model, tokenizer, rows, config.batch_size, model_config.max_length, model_config.truncation, device)
     after = _json_hash({key: value.detach().cpu().numpy().tobytes().hex() for key, value in model.state_dict().items()})
     if before != after:
         raise RuntimeError("Pesos do modelo mudaram durante inferência.")

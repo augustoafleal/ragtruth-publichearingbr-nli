@@ -84,9 +84,12 @@ class RagTruthParquetDataset(EvidenceBagDataset):
 
 
 class BagCollator:
-    def __init__(self, tokenizer, max_length: int) -> None:
+    def __init__(self, tokenizer, max_length: int, truncation: str = "only_first") -> None:
+        if truncation not in {"only_first", "longest_first"}:
+            raise ValueError("Estratégia de truncamento inválida")
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.truncation = truncation
 
     def __call__(self, rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
         n_evidence = len(rows[0]["evidence"])
@@ -103,7 +106,7 @@ class BagCollator:
         encoded = self.tokenizer(
             premises,
             claims,
-            truncation="only_first",
+            truncation=self.truncation,
             max_length=self.max_length,
             padding=True,
             return_tensors="pt",
