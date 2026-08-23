@@ -42,6 +42,16 @@ evaluation run only afterward. The PT zero-shot configuration expects the
 dataset at `data/PublicHearingBR_NLI.jsonl`. Make sure it is available before
 the evaluation phase.
 
+## Portuguese MADLAD condition
+
+The MADLAD condition uses the same confirmatory architecture, optimizer,
+seeds, epoch budget and selection protocol as NLLB. Its translated Parquet is
+`data/processed/ragtruth_confirmatory_pt_madlad/dataset.parquet`, and its
+configuration is `configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml`.
+The condition uses `longest_first` token truncation because translated claims
+can exceed the 512-token model limit. The dedicated PublicHearingBR
+configuration is `configs/ragtruth_pt_madlad_to_publichearing_zero_shot.yaml`.
+
 ## Run
 
 Script: `scripts/run_ragtruth_confirmatory.py`

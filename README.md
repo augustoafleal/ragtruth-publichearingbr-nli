@@ -168,6 +168,25 @@ PublicHearingBR só são executados na fase `evaluate`, depois da seleção por
 `validation_AUPRC`; nenhum deles é usado durante o treino. Para a avaliação
 externa, disponibilize o PublicHearingBR em `data/PublicHearingBR_NLI.jsonl`.
 
+### RAGTruth PT MADLAD
+
+Após a tradução completa com `configs/ragtruth_translate_madlad.yaml`, use a
+configuração confirmatória própria do MADLAD:
+
+```bash
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml \
+  --validate-only
+
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml \
+  --phase train
+```
+
+As fases `evaluate` e `aggregate` usam a mesma configuração MADLAD depois do
+treino. O MADLAD PT usa `longest_first` para lidar com claims traduzidos que
+excedem o limite de 512 tokens.
+
 ### Ablação de pooling
 
 As variantes Mean, Max e Set Transformer usam, respectivamente,
