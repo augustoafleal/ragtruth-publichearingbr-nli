@@ -39,7 +39,7 @@ class ZeroShotConfig:
     expected_source_run_name: str = "ragtruth_lora_attention_mil_parquet"
     expected_ragtruth_dataset_signature: str = "0cdf598fa866741d"
     expected_ragtruth_schema: str = "ragtruth-qa-training-view-deduplicated-v1"
-    expected_ragtruth_split_signature: str = "525edec2966a4fac"
+    expected_ragtruth_split_signature: str | None = "525edec2966a4fac"
     expected_best_epoch: int = 3
     expected_model_revision: str = "b5113eb38ab63efdd7f280f8c144ea8b13f978ce"
     publichearing_path: Path = Path("data/PublicHearingBR_NLI.jsonl")
@@ -72,7 +72,7 @@ class ZeroShotConfig:
             expected_source_run_name=str(raw.get("expected_source_run_name", cls.expected_source_run_name)),
             expected_ragtruth_dataset_signature=str(raw.get("expected_ragtruth_dataset_signature", cls.expected_ragtruth_dataset_signature)),
             expected_ragtruth_schema=str(raw.get("expected_ragtruth_schema", cls.expected_ragtruth_schema)),
-            expected_ragtruth_split_signature=str(raw.get("expected_ragtruth_split_signature", cls.expected_ragtruth_split_signature)),
+            expected_ragtruth_split_signature=(str(raw["expected_ragtruth_split_signature"]) if raw.get("expected_ragtruth_split_signature") else (None if "expected_ragtruth_split_signature" in raw else cls.expected_ragtruth_split_signature)),
             expected_best_epoch=int(raw.get("expected_best_epoch", cls.expected_best_epoch)),
             expected_model_revision=str(raw.get("expected_model_revision", cls.expected_model_revision)),
             publichearing_path=resolve(raw.get("publichearing_path"), base_dir / "../data/PublicHearingBR_NLI.jsonl"),  # type: ignore[arg-type]
@@ -159,7 +159,7 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
     checkpoint_split_hashes = {}
     if isinstance(split_hashes, dict):
         checkpoint_split_hashes = split_hashes
-    if checkpoint_split_hashes.get("split") != config.expected_ragtruth_split_signature:
+    if config.expected_ragtruth_split_signature and checkpoint_split_hashes.get("split") != config.expected_ragtruth_split_signature:
         raise ValueError("Assinatura da divisão RAGTruth incompatível.")
     parent_manifest_path = dataset_metadata.get("manifest_path")
     if parent_manifest_path:

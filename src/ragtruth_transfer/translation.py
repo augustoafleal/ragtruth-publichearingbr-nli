@@ -2,20 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
-import re
 import sqlite3
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
+import pandas as pd
+
+from .ragtruth_parquet import load_ragtruth_parquet, split_ragtruth_parquet, validate_training_view_manifest
+from .translation_qa import classify_translation_pair
 
 TRANSLATION_CACHE_SCHEMA = "ragtruth-translation-cache-v1"
 TRANSLATION_MANIFEST_SCHEMA = "ragtruth-translated-v1"
-_SPLIT_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+PARQUET_TRANSLATION_MANIFEST_SCHEMA = "ragtruth-qa-training-view-deduplicated-v1"
 
 
 class BatchTranslator(Protocol):
@@ -52,27 +55,21 @@ class TranslationSettings:
 @dataclass(frozen=True)
 class TranslationConfig:
     translation: TranslationSettings
-    input_dir: Path
+    input_path: Path
     output_dir: Path
-    splits: tuple[str, ...]
     cache_path: Path | None = None
-    sample_fraction: float | None = None
-    sample_seed: int = 42
     max_examples_per_split: int | None = None
+    manifest_path: Path | None = None
+    expected_source_sha256: str | None = None
+    expected_source_signature: str | None = None
+    expected_source_schema: str | None = None
+    expected_source_rows: int | None = None
+    reference_split_assignments: Path | None = None
+    expected_split_signature: str | None = None
 
     def __post_init__(self) -> None:
-        if self.sample_fraction is not None and not 0.0 < self.sample_fraction <= 1.0:
-            raise ValueError("data.sample_fraction deve estar no intervalo (0, 1]")
         if self.max_examples_per_split is not None and self.max_examples_per_split < 1:
             raise ValueError("data.max_examples_per_split deve ser positivo")
-        if self.sample_fraction is not None and self.max_examples_per_split is not None:
-            raise ValueError(
-                "data.sample_fraction e data.max_examples_per_split são incompatíveis; use apenas um"
-            )
-
-    @property
-    def effective_sample_fraction(self) -> float:
-        return 1.0 if self.sample_fraction is None else self.sample_fraction
 
     @classmethod
     def from_yaml(cls, path: Path) -> "TranslationConfig":
@@ -112,27 +109,14 @@ class TranslationConfig:
                 result = path.parent / result
             return result.resolve()
 
-        splits_raw = data_raw.get("splits", ["train", "validation", "test"])
-        if not isinstance(splits_raw, list) or not splits_raw:
-            raise ValueError("data.splits deve ser uma lista não vazia")
-        splits = tuple(str(value) for value in splits_raw)
-        if any(not _SPLIT_NAME.fullmatch(value) for value in splits):
-            raise ValueError("data.splits contém nome inválido")
-        if len(set(splits)) != len(splits):
-            raise ValueError("data.splits não pode conter duplicatas")
-
-        input_dir = resolve(data_raw.get("input_dir"))
         output_dir = resolve(data_raw.get("output_dir"))
-        if input_dir is None or output_dir is None:
-            raise ValueError("data.input_dir e data.output_dir são obrigatórios")
+        input_path = resolve(data_raw.get("input_path"))
+        if output_dir is None or input_path is None:
+            raise ValueError("O pipeline oficial exige data.input_path e data.output_dir Parquet")
+        if "input_dir" in data_raw or "splits" in data_raw or "sample_fraction" in data_raw:
+            raise ValueError("O pipeline oficial não aceita input_dir, splits ou sample_fraction JSONL")
         cache_path = resolve(data_raw.get("cache_path"))
-        has_fraction = "sample_fraction" in data_raw
         has_smoke_limit = "max_examples_per_split" in data_raw and data_raw.get("max_examples_per_split") is not None
-        if has_fraction and has_smoke_limit:
-            raise ValueError(
-                "data.sample_fraction e data.max_examples_per_split são incompatíveis; use apenas um"
-            )
-        sample_fraction = float(data_raw["sample_fraction"]) if has_fraction else None
         max_examples_per_split = (
             int(data_raw["max_examples_per_split"]) if has_smoke_limit else None
         )
@@ -150,13 +134,17 @@ class TranslationConfig:
         )
         return cls(
             settings,
-            input_dir,
+            input_path,
             output_dir,
-            splits,
             cache_path,
-            sample_fraction,
-            int(data_raw.get("sample_seed", 42)),
             max_examples_per_split,
+            resolve(data_raw.get("manifest_path")),
+            str(data_raw["expected_source_sha256"]) if data_raw.get("expected_source_sha256") else None,
+            str(data_raw["expected_source_signature"]) if data_raw.get("expected_source_signature") else None,
+            str(data_raw["expected_source_schema"]) if data_raw.get("expected_source_schema") else None,
+            int(data_raw["expected_source_rows"]) if data_raw.get("expected_source_rows") is not None else None,
+            resolve(data_raw.get("reference_split_assignments")),
+            str(data_raw["expected_split_signature"]) if data_raw.get("expected_split_signature") else None,
         )
 
 
@@ -197,6 +185,9 @@ class _TransformersTranslator:
         self.model = AutoModelForSeq2SeqLM.from_pretrained(settings.model_name, **model_load_kwargs)
         self.model.to(self.device)
         self.model.eval()
+        self.resolved_model_revision = getattr(self.model.config, "_commit_hash", None)
+        self.resolved_dtype = str(self.dtype)
+        self.resolved_device = str(self.device)
 
     def _encode(self, texts: list[str]) -> dict[str, Any]:
         tokenized = self.tokenizer(texts, truncation=False, padding=False, add_special_tokens=True)
@@ -358,95 +349,12 @@ def _text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _dataset_rows(config: TranslationConfig) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
-    if config.input_dir.resolve() == config.output_dir.resolve():
-        raise ValueError("data.input_dir e data.output_dir devem ser diferentes")
-    rows_by_split: dict[str, list[dict[str, Any]]] = {}
-    input_files: dict[str, str] = {}
-    for split in config.splits:
-        path = config.input_dir / f"{split}.jsonl"
-        if not path.is_file():
-            raise FileNotFoundError(f"Split ausente: {path}")
-        input_files[split] = _sha256_file(path)
-        rows = _read_jsonl(path)
-        for row_index, row in enumerate(rows):
-            if not isinstance(row.get("claim"), str):
-                raise ValueError(f"{path}:{row_index + 1} tem claim que não é string")
-            evidence = row.get("evidence")
-            mask = row.get("evidence_mask")
-            if not isinstance(evidence, list) or not isinstance(mask, list) or len(evidence) != len(mask):
-                raise ValueError(f"{path}:{row_index + 1} tem evidence/evidence_mask incompatíveis")
-            if any(not isinstance(value, bool) for value in mask):
-                raise ValueError(f"{path}:{row_index + 1} tem evidence_mask que não é booleana")
-            if any(mask[index] and not isinstance(evidence[index], str) for index in range(len(mask))):
-                raise ValueError(f"{path}:{row_index + 1} tem evidência válida que não é string")
-        rows_by_split[split] = _select_rows(rows, split, config)
-    return rows_by_split, input_files
-
-
-def _select_rows(rows: list[dict[str, Any]], split: str, config: TranslationConfig) -> list[dict[str, Any]]:
-    if config.max_examples_per_split is not None:
-        return rows[: config.max_examples_per_split]
-    fraction = config.effective_sample_fraction
-    if fraction >= 1.0:
-        return rows
-    count = min(len(rows), max(1, math.ceil(len(rows) * fraction)))
-    ranked = sorted(
-        range(len(rows)),
-        key=lambda index: hashlib.sha256(
-            f"{config.sample_seed}:{split}:{index}:{rows[index].get('example_id', '')}".encode("utf-8")
-        ).hexdigest(),
-    )
-    selected = set(ranked[:count])
-    return [row for index, row in enumerate(rows) if index in selected]
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            value = json.loads(line)
-            if not isinstance(value, dict):
-                raise ValueError(f"Esperava objeto JSON em {path}, linha {line_number}")
-            rows.append(value)
-    return rows
-
-
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _translatable_texts(rows_by_split: dict[str, list[dict[str, Any]]]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for rows in rows_by_split.values():
-        for row in rows:
-            candidates = [row["claim"]]
-            candidates.extend(
-                value for value, is_valid in zip(row["evidence"], row["evidence_mask"]) if is_valid
-            )
-            for text in candidates:
-                if text and text not in seen:
-                    seen.add(text)
-                    result.append(text)
-    return result
-
-
-def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
-        temporary = Path(handle.name)
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
 
 
 def _write_text_atomic(path: Path, value: str) -> None:
@@ -459,106 +367,241 @@ def _write_text_atomic(path: Path, value: str) -> None:
     os.replace(temporary, path)
 
 
+def _write_parquet_atomic(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+        temporary = Path(handle.name)
+    try:
+        frame.to_parquet(temporary, index=False)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _parquet_rows(config: TranslationConfig) -> tuple[pd.DataFrame, dict[str, Any], str]:
+    if config.input_path is None:
+        raise ValueError("A origem Parquet não está configurada")
+    if config.input_path.resolve() == (config.output_dir / "dataset.parquet").resolve():
+        raise ValueError("O Parquet de entrada e saída devem ser diferentes")
+    lineage = validate_training_view_manifest(
+        config.input_path,
+        manifest_path=config.manifest_path,
+        expected_signature=config.expected_source_signature,
+        expected_schema=config.expected_source_schema,
+    )
+    if config.expected_source_sha256 and lineage["dataset_sha256"] != config.expected_source_sha256:
+        raise ValueError("SHA-256 do Parquet de origem diverge da configuração")
+    frame = pd.read_parquet(config.input_path)
+    required = {"example_id", "source_id", "response_id", "split", "claim", "label", "evidence_mask", "chunk_1", "chunk_2", "chunk_3", "chunk_4"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"Parquet de origem sem colunas obrigatórias: {missing}")
+    if frame["response_id"].isna().any() or (frame["response_id"].astype(str).str.strip() == "").any():
+        raise ValueError("response_id não pode estar vazio no Parquet de origem")
+    load_ragtruth_parquet(
+        config.input_path,
+        manifest_path=config.manifest_path,
+        expected_signature=config.expected_source_signature,
+        expected_schema=config.expected_source_schema,
+    )
+    if config.expected_source_rows is not None and len(frame) != config.expected_source_rows:
+        raise ValueError("Número de linhas do Parquet de origem diverge da configuração")
+    lineage = {**lineage, "input_rows": int(len(frame))}
+    if config.max_examples_per_split is not None:
+        frame = frame.iloc[: config.max_examples_per_split].copy()
+    return frame, lineage, _input_signature({"dataset.parquet": lineage["dataset_sha256"]}, ())
+
+
+def _parquet_texts(frame: pd.DataFrame) -> list[str]:
+    texts: list[str] = []
+    seen: set[str] = set()
+    for _, row in frame.iterrows():
+        candidates = [str(row["claim"])]
+        mask = list(row["evidence_mask"])
+        candidates.extend(str(row[f"chunk_{index}"]) for index, valid in enumerate(mask, start=1) if bool(valid))
+        for text in candidates:
+            if not text:
+                raise ValueError("Texto traduzível vazio no Parquet canônico")
+            if text not in seen:
+                seen.add(text)
+                texts.append(text)
+    return texts
+
+
+def _translation_signature(config: TranslationConfig, input_signature: str) -> tuple[str, str, str]:
+    config_signature = _config_signature(config.translation)
+    selection = {"max_examples": config.max_examples_per_split}
+    selection_signature = hashlib.sha256(json.dumps(selection, sort_keys=True).encode("utf-8")).hexdigest()
+    return config_signature, selection_signature, hashlib.sha256(
+        f"{config_signature}:{input_signature}:{selection_signature}".encode("utf-8")
+    ).hexdigest()
+
+
+def _assert_same_split_assignments(config: TranslationConfig, output_path: Path, manifest_path: Path) -> dict[str, Any] | None:
+    if config.reference_split_assignments is None:
+        return None
+    if config.max_examples_per_split is not None:
+        return {"checked": False, "reason": "smoke_subset"}
+    if not config.reference_split_assignments.is_file():
+        raise FileNotFoundError(f"Split assignments de referência não encontrados: {config.reference_split_assignments}")
+    rows, metadata = load_ragtruth_parquet(
+        output_path,
+        manifest_path=manifest_path,
+        expected_schema=PARQUET_TRANSLATION_MANIFEST_SCHEMA,
+    )
+    split = split_ragtruth_parquet(rows, metadata, split_seed=42, validation_fraction=0.15, max_test_sources=None)
+    expected = pd.read_parquet(config.reference_split_assignments)
+    actual = split.assignments
+    columns = ["source_id", "partition"]
+    if any(column not in expected.columns for column in columns):
+        raise ValueError("Split assignments de referência não contém source_id/partition")
+    expected = expected[columns].sort_values(columns).reset_index(drop=True)
+    actual = actual[columns].sort_values(columns).reset_index(drop=True)
+    if not expected.equals(actual):
+        raise ValueError("As atribuições train/validation/test do Parquet traduzido divergem da referência EN")
+    return {"checked": True, "translated_signature": split.metadata["signature"], "reference": str(config.reference_split_assignments), "reference_signature": config.expected_split_signature}
+
+
+def _translation_qa(source: pd.DataFrame, translated: pd.DataFrame) -> tuple[dict[str, Any], pd.DataFrame]:
+    flags: list[dict[str, Any]] = []
+    pairs = 0
+    counts = {"low_ratio": 0, "high_ratio": 0, "high_confidence_repetition": 0, "empty_translation": 0, "control_character_issue": 0, "exclusion_candidate": 0}
+    for source_row, translated_row in zip(source.to_dict("records"), translated.to_dict("records")):
+        values = [("claim", None, source_row["claim"], translated_row["claim"])]
+        mask = list(source_row["evidence_mask"])
+        values.extend((f"chunk_{index}", index, source_row[f"chunk_{index}"], translated_row[f"chunk_{index}"]) for index, valid in enumerate(mask, start=1) if bool(valid))
+        for field, slot, original, rendered in values:
+            pairs += 1
+            metrics = classify_translation_pair(original, rendered)
+            for name in counts:
+                counts[name] += int(bool(metrics[name]))
+            if metrics["exclusion_candidate"] or metrics["empty_translation"] or metrics["control_character_issue"]:
+                flags.append({"example_id": str(source_row["example_id"]), "field": field, "slot": slot, **metrics})
+    columns = ["example_id", "field", "slot", "source_normalized", "translated_normalized", "source_chars", "translated_chars", "source_words", "translated_words", "length_ratio", "empty_translation", "identical_to_source", "low_ratio", "high_ratio", "source_has_repetition", "translation_has_repetition", "source_repetition_metric", "translation_repetition_metric", "repetition_excess", "repetition_severity", "translation_added_repetition", "high_confidence_repetition", "control_character_issue", "exclusion_candidate"]
+    return {"pairs": pairs, "flags": counts, "flagged_pairs": len(flags), "rows_removed": 0, "filtering_applied": False}, pd.DataFrame(flags, columns=columns)
+
+
+def _runtime_manifest_fields(translator: BatchTranslator | None) -> dict[str, Any]:
+    return {
+        "resolved_model_revision": getattr(translator, "resolved_model_revision", None),
+        "resolved_dtype": getattr(translator, "resolved_dtype", None),
+        "resolved_device": getattr(translator, "resolved_device", None),
+    }
+
+
+def _translate_parquet(
+    config: TranslationConfig,
+    translator: BatchTranslator | None,
+    *,
+    resume: bool,
+) -> dict[str, Any]:
+    frame, lineage, input_signature = _parquet_rows(config)
+    config_signature, selection_signature, run_signature = _translation_signature(config, input_signature)
+    output_path = config.output_dir / "dataset.parquet"
+    manifest_path = config.output_dir / "manifest.json"
+    if output_path.exists() or manifest_path.exists():
+        if not resume:
+            raise FileExistsError(f"Output Parquet já existe: {config.output_dir}. Use --resume apenas para output compatível.")
+        if not output_path.is_file() or not manifest_path.is_file():
+            raise ValueError("Output Parquet parcialmente existente; não é seguro retomar")
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if existing.get("run_signature") != run_signature or existing.get("status") != "completed":
+            raise ValueError("Output Parquet existente é incompatível com a configuração")
+        for relative, expected in dict(existing.get("artifacts", {})).items():
+            candidate = config.output_dir / relative
+            if not candidate.is_file() or _sha256_file(candidate) != str(expected):
+                raise ValueError("Artefato do Output Parquet existente diverge do manifesto")
+        _assert_same_split_assignments(config, output_path, manifest_path)
+        return existing
+
+    texts = _parquet_texts(frame)
+    hashes = {_text_hash(text): text for text in texts}
+    cache_path = config.cache_path or config.output_dir / ".translation_cache.sqlite3"
+    translations: dict[str, str] = {}
+    active: BatchTranslator | None = None
+    cache_hits = 0
+    cache_misses = 0
+    with TranslationCache(cache_path, config_signature, input_signature) as cache:
+        translations.update(cache.get_many(list(hashes)))
+        cache_hits = len(translations)
+        missing = [text for text in texts if _text_hash(text) not in translations]
+        cache_misses = len(missing)
+        if missing:
+            active = translator or create_translator(config.translation)
+            for start in range(0, len(missing), config.translation.batch_size):
+                batch = missing[start : start + config.translation.batch_size]
+                translated = active.translate_batch(batch)
+                if len(translated) != len(batch) or any(not isinstance(value, str) or not value.strip() for value in translated):
+                    raise RuntimeError("Tradutor retornou resultado incompleto ou vazio")
+                values = {_text_hash(source): target for source, target in zip(batch, translated)}
+                cache.put_many(values)
+                translations.update(values)
+    missing_hashes = sorted(set(hashes) - set(translations))
+    if missing_hashes:
+        raise RuntimeError(f"Traduções ausentes para {len(missing_hashes)} textos; nenhuma cópia em inglês é permitida")
+
+    result = frame.copy(deep=True)
+    result["claim"] = [translations[_text_hash(str(value))] for value in frame["claim"]]
+    for index in range(1, 5):
+        column = f"chunk_{index}"
+        values: list[Any] = []
+        for text, mask in zip(frame[column], frame["evidence_mask"]):
+            values.append(translations[_text_hash(str(text))] if bool(list(mask)[index - 1]) else text)
+        result[column] = values
+    _write_parquet_atomic(output_path, result)
+    qa_summary, qa_flags = _translation_qa(frame, result)
+    qa_summary_path = config.output_dir / "translation_qa.json"
+    qa_flags_path = config.output_dir / "translation_qa_flags.parquet"
+    _write_text_atomic(qa_summary_path, json.dumps(qa_summary, ensure_ascii=False, indent=2) + "\n")
+    _write_parquet_atomic(qa_flags_path, qa_flags)
+
+    manifest = {
+        "schema_version": PARQUET_TRANSLATION_MANIFEST_SCHEMA,
+        "status": "validating",
+        "signature": run_signature[:16],
+        "run_signature": run_signature,
+        "translation_schema": "ragtruth-confirmatory-parquet-translation-v1",
+        "created_at": time.time(),
+        "mode": "smoke" if config.max_examples_per_split is not None else "full",
+        "is_full_dataset": config.max_examples_per_split is None,
+        "backend": config.translation.translator,
+        "model_name": config.translation.model_name,
+        "requested_model_revision": config.translation.model_revision,
+        **_runtime_manifest_fields(active),
+        "source_language": config.translation.source_language,
+        "target_language": config.translation.target_language,
+        "generation": {"num_beams": config.translation.num_beams, "max_input_tokens": config.translation.max_input_tokens, "max_new_tokens": config.translation.max_new_tokens, "batch_size": config.translation.batch_size, "sampling": False},
+        "device": config.translation.device,
+        "source": {"path": str(config.input_path), "dataset_sha256": lineage["dataset_sha256"], "signature": lineage["signature"], "schema_version": lineage["schema_version"], "input_rows": lineage["input_rows"]},
+        "artifacts": {"dataset.parquet": _sha256_file(output_path), "translation_qa.json": _sha256_file(qa_summary_path), "translation_qa_flags.parquet": _sha256_file(qa_flags_path)},
+        "columns": list(frame.columns),
+        "translation_contract": {"translated": ["claim", "chunk_i where evidence_mask[i] is true"], "preserved": "all other cells, row order, columns, IDs, labels, masks, splits and retrieval metadata", "english_chunk_hashes_and_offsets": "preserved as provenance of the canonical EN source; not recomputed after translation", "retrieval_rerun": False, "top_k_preserved": True, "labels_preserved": True, "row_order_preserved": True, "fallback_to_source_text": False},
+        "counts": {"input_rows": lineage["input_rows"], "output_rows": int(len(frame)), "unique_texts": len(texts), "valid_evidence_texts": int(sum(sum(bool(value) for value in list(mask)) for mask in frame["evidence_mask"]))},
+        "cache": {"path": str(cache_path), "hits": cache_hits, "misses": cache_misses},
+        "qa": qa_summary,
+        "input_signature": input_signature,
+        "config_signature": config_signature,
+        "selection_signature": selection_signature,
+    }
+    _write_text_atomic(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    split_check = _assert_same_split_assignments(config, output_path, manifest_path)
+    if split_check is not None:
+        manifest["split_assignment_validation"] = split_check
+    manifest["status"] = "completed"
+    _write_text_atomic(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    return manifest
+
+
+def validate_translation_input(config: TranslationConfig) -> dict[str, Any]:
+    frame, lineage, input_signature = _parquet_rows(config)
+    return {"status": "valid", "format": "parquet", "model_loaded": False, "rows": len(frame), "unique_texts": len(_parquet_texts(frame)), "source": lineage, "input_signature": input_signature}
+
+
 def translate_ragtruth(
     config: TranslationConfig,
     translator: BatchTranslator | None = None,
     *,
     resume: bool = False,
 ) -> dict[str, Any]:
-    rows_by_split, input_files = _dataset_rows(config)
-    input_signature = _input_signature(input_files, config.splits)
-    config_signature = _config_signature(config.translation)
-    cache_path = config.cache_path or config.output_dir / ".translation_cache.sqlite3"
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    existing_manifest_path = config.output_dir / "manifest.json"
-    selection_payload = {
-        "sample_fraction": config.effective_sample_fraction,
-        "sample_seed": config.sample_seed,
-        "max_examples_per_split": config.max_examples_per_split,
-    }
-    selection_signature = hashlib.sha256(
-        json.dumps(selection_payload, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    run_signature = hashlib.sha256(
-        f"{config_signature}:{input_signature}:{selection_signature}".encode("utf-8")
-    ).hexdigest()
-    if existing_manifest_path.is_file():
-        existing = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
-        if existing.get("run_signature") != run_signature:
-            raise ValueError(f"Output existente é incompatível com a configuração: {config.output_dir}")
-        if resume and all((config.output_dir / f"{split}.jsonl").is_file() for split in config.splits):
-            return existing
-
-    texts = _translatable_texts(rows_by_split)
-    hashes = {_text_hash(text): text for text in texts}
-    translations: dict[str, str] = {}
-    with TranslationCache(cache_path, config_signature, input_signature) as cache:
-        translations.update(cache.get_many(list(hashes)))
-        missing = [text for text in texts if _text_hash(text) not in translations]
-        if missing:
-            active_translator = translator or create_translator(config.translation)
-            for start in range(0, len(missing), config.translation.batch_size):
-                batch = missing[start : start + config.translation.batch_size]
-                translated = active_translator.translate_batch(batch)
-                if len(translated) != len(batch) or any(not isinstance(value, str) for value in translated):
-                    raise RuntimeError("Tradutor retornou resultado incompleto ou inválido")
-                batch_values = {_text_hash(text): value for text, value in zip(batch, translated)}
-                cache.put_many(batch_values)
-                translations.update(batch_values)
-
-        output_rows: dict[str, list[dict[str, Any]]] = {}
-        for split, rows in rows_by_split.items():
-            converted: list[dict[str, Any]] = []
-            for row in rows:
-                result = dict(row)
-                result["claim"] = translations.get(_text_hash(row["claim"]), row["claim"])
-                result["evidence"] = [
-                    translations.get(_text_hash(value), value) if is_valid else value
-                    for value, is_valid in zip(row["evidence"], row["evidence_mask"])
-                ]
-                converted.append(result)
-            output_rows[split] = converted
-
-    for split, rows in output_rows.items():
-        _write_jsonl_atomic(config.output_dir / f"{split}.jsonl", rows)
-
-    mode = (
-        "smoke"
-        if config.max_examples_per_split is not None
-        else ("full" if config.effective_sample_fraction >= 1.0 else "sample")
-    )
-    manifest = {
-        "schema_version": TRANSLATION_MANIFEST_SCHEMA,
-        "status": "completed",
-        "run_signature": run_signature,
-        "mode": mode,
-        "sample_fraction": config.effective_sample_fraction,
-        "sample_seed": config.sample_seed,
-        "max_examples_per_split": config.max_examples_per_split,
-        "is_full_dataset": mode == "full",
-        "backend": config.translation.translator,
-        "model_name": config.translation.model_name,
-        "model_revision": config.translation.model_revision,
-        "source_language": config.translation.source_language,
-        "target_language": config.translation.target_language,
-        "generation": {
-            "num_beams": config.translation.num_beams,
-            "max_input_tokens": config.translation.max_input_tokens,
-            "max_new_tokens": config.translation.max_new_tokens,
-        },
-        "device": config.translation.device,
-        "splits": list(config.splits),
-        "counts": {
-            "examples": sum(len(rows) for rows in rows_by_split.values()),
-            "unique_texts": len(texts),
-            "examples_by_split": {split: len(rows) for split, rows in rows_by_split.items()},
-        },
-        "input": {
-            "directory": str(config.input_dir),
-            "files_sha256": input_files,
-            "signature": input_signature,
-            "selection_signature": selection_signature,
-        },
-    }
-    _write_text_atomic(existing_manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-    return manifest
+    return _translate_parquet(config, translator, resume=resume)

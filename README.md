@@ -73,10 +73,11 @@ python scripts/build_ragtruth_training_view.py \
 
 ## Tradução do RAGTruth para português
 
-O pipeline de tradução lê os JSONL processados em
-`data/processed/ragtruth_textual` e mantém os mesmos splits, ordem e schema.
-Somente `claim` e as evidências com `evidence_mask: true` são traduzidos; os
-demais campos e slots mascarados são preservados.
+O NLLB oficial lê o Parquet canônico pós-RAG e pós-deduplicação. Somente
+`claim` e os chunks com `evidence_mask: true` são traduzidos. Todas as outras
+colunas, IDs, labels, masks, ordem, splits e metadados de retrieval são preservados.
+NLLB e MADLAD usam o mesmo Parquet canônico e produzem outputs Parquet
+separados, preservando a população experimental.
 
 NLLB:
 
@@ -92,24 +93,21 @@ python scripts/translate_ragtruth.py \
   --config configs/ragtruth_translate_madlad.yaml
 ```
 
-Antes de uma campanha no cluster, há smoke configs que processam no máximo
-3 registros por split:
+Antes de uma campanha no cluster, valide o smoke NLLB sem carregar pesos:
 
 ```bash
 python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_nllb_smoke.yaml
+  --config configs/ragtruth_translate_nllb_smoke.yaml --validate-only
 
 python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_madlad_smoke.yaml
+  --config configs/ragtruth_translate_madlad_smoke.yaml --validate-only
 ```
 
-As configs normais usam `sample_fraction: 1.0` (100%) e `sample_seed: 42`.
-Para uma amostra determinística, altere a fração para, por exemplo,
-`0.25` (25% de cada split). Smoke e sampling são opções distintas e não
-podem ser configurados juntos; cada smoke output usa um diretório separado.
+As configs normais processam todo o Parquet canônico. As smoke configs usam
+um output separado e podem ser validadas sem carregar pesos com `--validate-only`.
 
-Os outputs são, respectivamente, `data/processed/ragtruth_textual_pt_nllb`
-e `data/processed/ragtruth_textual_pt_madlad`. O device é escolhido por
+Os outputs são `data/processed/ragtruth_confirmatory_pt_nllb` e
+`data/processed/ragtruth_confirmatory_pt_madlad`. O device é escolhido por
 `device: auto` (CUDA quando disponível, caso contrário CPU); ele pode ser
 alterado para `cpu` ou `cuda` no YAML. Um cache SQLite persistente fica junto
 ao output e é reutilizado automaticamente após interrupções. Ele é validado
@@ -148,12 +146,11 @@ python scripts/run_ragtruth_confirmatory.py \
   --phase aggregate
 ```
 
-### RAGTruth PT NLLB filtrado
+### RAGTruth PT NLLB
 
-Esta condição reutiliza a mesma arquitetura/protocolo confirmatório, mas aponta
-exclusivamente para `data/processed/ragtruth_textual_pt_nllb_filtered`. O
-wrapper valida ou reutiliza o filtro antes de iniciar as três seeds; o
-`--dry-run` não carrega pesos nem treina:
+Esta condição reutiliza a mesma arquitetura e protocolo confirmatório, mas usa
+o Parquet canônico traduzido em `data/processed/ragtruth_confirmatory_pt_nllb`.
+O wrapper não filtra dados. O `--dry-run` não carrega pesos nem treina:
 
 ```bash
 python scripts/run_ragtruth_pt_nllb_experiment.py \

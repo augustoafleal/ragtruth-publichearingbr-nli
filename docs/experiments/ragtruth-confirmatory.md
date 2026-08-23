@@ -18,13 +18,13 @@ split. Verify both values in the resolved configuration before training.
 
 `configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml` keeps
 the same model, LoRA settings, seeds, optimizer, epochs, validation metric and
-evaluation protocol, while selecting only the filtered Portuguese JSONL
-directory. The filter manifest is frozen by its input hashes, aggregate dataset
-hash and split signature. It currently contains 45,238 train, 8,143 validation
-and 9,121 test examples.
+evaluation protocol, while selecting the canonical translated Portuguese
+Parquet. It has the same 34,604 rows and source IDs as the English view; only
+the claim and valid evidence text are translated. Grouped assignments are
+compared with the English reference during translation.
 
-The one-shot wrapper validates/reuses the filtered dataset and then starts
-training:
+The compatibility wrapper only dispatches the confirmatory flow; it does not
+filter or rebuild data:
 
 ```bash
 python scripts/run_ragtruth_pt_nllb_experiment.py \
@@ -35,7 +35,6 @@ python scripts/run_ragtruth_pt_nllb_experiment.py \
   --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
 ```
 
-Use `--force-filter` only when you want to rebuild the filtered output.
 The validation-only command does not download model weights, initialize CUDA,
 or start training. During training, RAGTruth validation is used to select
 checkpoints and thresholds. RAGTruth test and PublicHearingBR zero-shot

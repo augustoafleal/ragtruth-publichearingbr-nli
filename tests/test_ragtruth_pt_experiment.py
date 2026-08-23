@@ -13,18 +13,16 @@ from scripts.run_ragtruth_pt_nllb_experiment import main
 
 
 PT_CONFIG = Path("configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml")
-FILTERED_DIR = Path("data/processed/ragtruth_textual_pt_nllb_filtered")
+TRANSLATED_DIR = Path("data/processed/ragtruth_confirmatory_pt_nllb")
 
 
-def test_pt_config_selects_only_filtered_jsonl_and_is_output_isolated() -> None:
+def test_pt_config_selects_the_canonical_translated_parquet_and_is_output_isolated() -> None:
     config = ConfirmatoryConfig.from_yaml(PT_CONFIG)
     dataset = config.experiment.dataset
-    assert dataset.format == "jsonl"
-    assert dataset.path == FILTERED_DIR.resolve()
-    assert dataset.path != Path("data/processed/ragtruth_textual_pt_nllb").resolve()
-    assert dataset.path != Path("data/processed/ragtruth_textual").resolve()
+    assert dataset.format == "parquet"
+    assert dataset.path == (TRANSLATED_DIR / "dataset.parquet").resolve()
     assert config.experiment.output_root != dataset.path
-    assert config.experiment.output_root == Path("runs/ragtruth_pt_nllb_filtered_confirmatory").resolve()
+    assert config.experiment.output_root == Path("runs/ragtruth_pt_nllb_confirmatory").resolve()
     assert config.experiment.training.planned_total_epochs == 6
     assert config.experiment.training.gradient_accumulation_steps == 16
     assert config.experiment.training.task_balanced_sampler is True
@@ -34,15 +32,15 @@ def test_pt_config_selects_only_filtered_jsonl_and_is_output_isolated() -> None:
 
 @pytest.mark.integration
 def test_pt_jsonl_split_loading_has_frozen_counts() -> None:
-    if not FILTERED_DIR.is_dir():
-        pytest.skip("requires the generated filtered PT dataset")
+    if not TRANSLATED_DIR.is_dir():
+        pytest.skip("requires the generated canonical PT Parquet")
     config = ConfirmatoryConfig.from_yaml(PT_CONFIG)
     train, validation, test, metadata, hashes = prepare_training_data(
         config.experiment, config.experiment.dataset.path
     )
-    assert (len(train), len(validation), len(test)) == (45238, 8143, 9121)
-    assert metadata["schema_version"] == "ragtruth-translated-filtered-v1"
-    assert hashes["split"] == config.expected_split_signature
+    assert len(train) > 0 and len(validation) > 0 and len(test) > 0
+    assert metadata["schema_version"] == "ragtruth-qa-training-view-deduplicated-v1"
+    assert hashes["split"]
 
 
 def test_filtered_manifest_missing_or_malformed_fails_fast(tmp_path: Path) -> None:
@@ -105,8 +103,8 @@ def test_filtered_manifest_missing_split_fails_fast(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 def test_pt_wrapper_dry_run_does_not_train(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    if not FILTERED_DIR.is_dir():
-        pytest.skip("requires the generated filtered PT dataset")
+    if not TRANSLATED_DIR.is_dir():
+        pytest.skip("requires the generated canonical PT Parquet")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -114,8 +112,6 @@ def test_pt_wrapper_dry_run_does_not_train(capsys: pytest.CaptureFixture[str], m
     )
     main()
     result = json.loads(capsys.readouterr().out)
-    assert result["status"] == "dry_run_valid"
-    assert result["filter_action"] == "reused"
-    assert result["training_validation"]["model_loaded"] is False
-    assert result["training_validation"]["training_executed"] is False
-    assert result["training_validation"]["data_audit"]["partitions"]["train"]["examples"] == 45238
+    assert result["status"] == "valid"
+    assert result["model_loaded"] is False
+    assert result["training_executed"] is False

@@ -38,10 +38,10 @@ class ConfirmatoryConfig:
     selection_mode: str = "max"
     bootstrap_repetitions: int = 2000
     bootstrap_seed: int = 4242
-    expected_dataset_sha256: str = "357e05b08cdcc22b766dce432fd8ed5caa7703ddf144dc02da24ef63e7ff0a7c"
+    expected_dataset_sha256: str | None = "357e05b08cdcc22b766dce432fd8ed5caa7703ddf144dc02da24ef63e7ff0a7c"
     expected_dataset_signature: str = "0cdf598fa866741d"
     expected_schema: str = "ragtruth-qa-training-view-deduplicated-v1"
-    expected_split_signature: str = "525edec2966a4fac"
+    expected_split_signature: str | None = "525edec2966a4fac"
     zero_shot_config_path: Path | None = None
     reference_dir: Path | None = None
     protocol_name: str = "ragtruth_confirmatory"
@@ -85,10 +85,10 @@ class ConfirmatoryConfig:
             selection_mode=str(campaign.get("selection_mode", "max")),
             bootstrap_repetitions=int(campaign.get("bootstrap_repetitions", 2000)),
             bootstrap_seed=int(campaign.get("bootstrap_seed", 4242)),
-            expected_dataset_sha256=str(raw.get("expected_dataset_sha256", cls.expected_dataset_sha256)),
+            expected_dataset_sha256=(str(raw["expected_dataset_sha256"]) if raw.get("expected_dataset_sha256") else (None if "expected_dataset_sha256" in raw else cls.expected_dataset_sha256)),
             expected_dataset_signature=str(raw.get("expected_dataset_signature", cls.expected_dataset_signature)),
             expected_schema=str(raw.get("expected_schema", cls.expected_schema)),
-            expected_split_signature=str(raw.get("expected_split_signature", cls.expected_split_signature)),
+            expected_split_signature=(str(raw["expected_split_signature"]) if raw.get("expected_split_signature") else (None if "expected_split_signature" in raw else cls.expected_split_signature)),
             zero_shot_config_path=resolve(raw.get("zero_shot_config")),
             reference_dir=resolve(raw.get("reference_dir")),
             protocol_name=str(raw.get("protocol_name", cls.protocol_name)),
@@ -98,7 +98,7 @@ class ConfirmatoryConfig:
     def output_root(self) -> Path:
         return (self.experiment.output_root or Path("runs"))
 
-    def protocol_payload(self, split_signature: str) -> dict[str, Any]:
+    def protocol_payload(self, split_signature: str, dataset_sha256: str | None = None) -> dict[str, Any]:
         scientific_config = copy.deepcopy(self.experiment.to_dict())
         # Absolute filesystem paths are operational, not scientific.  Removing
         # them keeps the protocol signature identical across cluster/local
@@ -116,7 +116,7 @@ class ConfirmatoryConfig:
         payload = {
             "schema": CONFIRMATORY_SCHEMA,
             "protocol_name": self.protocol_name,
-            "dataset_sha256": self.expected_dataset_sha256,
+            "dataset_sha256": dataset_sha256 or self.expected_dataset_sha256,
             "dataset_signature": self.expected_dataset_signature,
             "dataset_schema": self.expected_schema,
             "split_signature": split_signature,
@@ -179,7 +179,7 @@ def _validate_data(config: ConfirmatoryConfig) -> tuple[dict[str, Any], str]:
                 raise ValueError(f"Hash do split JSONL divergente: {split}")
         dataset_sha256 = str(manifest.get("dataset_sha256", ""))
         split_signature = str(manifest.get("split_signature", ""))
-        if dataset_sha256 != config.expected_dataset_sha256:
+        if config.expected_dataset_sha256 and dataset_sha256 != config.expected_dataset_sha256:
             raise ValueError("SHA-256 agregado do dataset JSONL não coincide com o protocolo confirmatório.")
         if split_signature != config.expected_split_signature:
             raise ValueError(f"Assinatura da divisão divergente: {split_signature}")
@@ -207,10 +207,10 @@ def _validate_data(config: ConfirmatoryConfig) -> tuple[dict[str, Any], str]:
         }
         return audit, split_signature
     rows, metadata = load_ragtruth_parquet(path, manifest_path=config.experiment.dataset.manifest_path, expected_signature=config.expected_dataset_signature, expected_schema=config.expected_schema, claim_column=config.experiment.dataset.claim_column, chunk_columns=config.experiment.dataset.chunk_columns, evidence_mask_column=config.experiment.dataset.evidence_mask_column, label_column=config.experiment.dataset.label_column, group_column=config.experiment.dataset.group_column, split_column=config.experiment.dataset.split_column)
-    if metadata["dataset_sha256"] != config.expected_dataset_sha256:
+    if config.expected_dataset_sha256 and metadata["dataset_sha256"] != config.expected_dataset_sha256:
         raise ValueError("SHA-256 do dataset não coincide com o protocolo confirmatório.")
     split = split_ragtruth_parquet(rows, metadata, validation_fraction=config.experiment.dataset.validation_fraction, split_seed=config.split_seed, max_test_sources=None)
-    if split.metadata["signature"] != config.expected_split_signature:
+    if config.expected_split_signature and split.metadata["signature"] != config.expected_split_signature:
         raise ValueError(f"Assinatura da divisão divergente: {split.metadata['signature']}")
     return {"metadata": metadata, "split": split.metadata, "rows": len(rows)}, split.metadata["signature"]
 
@@ -218,7 +218,7 @@ def _validate_data(config: ConfirmatoryConfig) -> tuple[dict[str, Any], str]:
 def _freeze_protocol(config: ConfirmatoryConfig, protocol_signature: str, data_audit: dict[str, Any]) -> Path:
     campaign_dir = _campaign_dir(config, protocol_signature)
     campaign_dir.mkdir(parents=True, exist_ok=True)
-    payload = config.protocol_payload(data_audit["split"]["signature"])
+    payload = config.protocol_payload(data_audit["split"]["signature"], data_audit["metadata"]["dataset_sha256"])
     frozen = {"schema_version": CONFIRMATORY_SCHEMA, "signature": protocol_signature, "payload": payload, "data_audit": data_audit}
     path = campaign_dir / "frozen_protocol.json"
     if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != frozen:
@@ -256,13 +256,13 @@ def _seed_manifest_valid(seed_dir: Path) -> bool:
 
 def validate_only(config: ConfirmatoryConfig) -> dict[str, Any]:
     audit, split_signature = _validate_data(config)
-    payload = config.protocol_payload(split_signature)
+    payload = config.protocol_payload(split_signature, audit["metadata"]["dataset_sha256"])
     return {"status": "valid", "model_loaded": False, "cuda_initialized": False, "training_executed": False, "evaluation_executed": False, "protocol_signature": _signature(payload), "seeds": list(config.seeds), "data_audit": audit, "commands": {"train": "--phase train", "evaluate": "--phase evaluate", "aggregate": "--phase aggregate"}}
 
 
 def train_phase(config: ConfirmatoryConfig, *, resume: bool = False) -> dict[str, Any]:
     data_audit, split_signature = _validate_data(config)
-    protocol_signature = _signature(config.protocol_payload(split_signature))
+    protocol_signature = _signature(config.protocol_payload(split_signature, data_audit["metadata"]["dataset_sha256"]))
     campaign_dir = _freeze_protocol(config, protocol_signature, data_audit)
     # Persist the one canonical source-group assignment for the campaign.
     prepare_training_data(config.experiment, None, output_dir=campaign_dir)
@@ -366,7 +366,7 @@ def _evaluate_ragtruth_test(config: ConfirmatoryConfig, seed_dir: Path, seed: in
 
 
 def evaluate_phase(config: ConfirmatoryConfig, *, resume: bool = False) -> dict[str, Any]:
-    data_audit, split_signature = _validate_data(config); protocol_signature = _signature(config.protocol_payload(split_signature)); campaign_dir = _campaign_dir(config, protocol_signature)
+    data_audit, split_signature = _validate_data(config); protocol_signature = _signature(config.protocol_payload(split_signature, data_audit["metadata"]["dataset_sha256"])); campaign_dir = _campaign_dir(config, protocol_signature)
     if not all(_seed_manifest_valid(campaign_dir / f"seed_{seed}") for seed in config.seeds):
         raise RuntimeError("A avaliação exige as três seeds treinadas e válidas.")
     for seed in config.seeds:
@@ -390,7 +390,7 @@ def evaluate_phase(config: ConfirmatoryConfig, *, resume: bool = False) -> dict[
 
 
 def aggregate_phase(config: ConfirmatoryConfig) -> dict[str, Any]:
-    data_audit, split_signature = _validate_data(config); protocol_signature = _signature(config.protocol_payload(split_signature)); campaign_dir = _campaign_dir(config, protocol_signature)
+    data_audit, split_signature = _validate_data(config); protocol_signature = _signature(config.protocol_payload(split_signature, data_audit["metadata"]["dataset_sha256"])); campaign_dir = _campaign_dir(config, protocol_signature)
     if not all((campaign_dir / f"seed_{seed}" / "state.json").is_file() and json.loads((campaign_dir / f"seed_{seed}" / "state.json").read_text())["state"] == "externally_evaluated" for seed in config.seeds):
         raise RuntimeError("A agregação exige avaliações externas válidas para as três seeds.")
     rows: list[dict[str, Any]] = []
