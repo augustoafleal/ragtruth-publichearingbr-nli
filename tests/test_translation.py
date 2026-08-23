@@ -140,3 +140,31 @@ def test_split_assignments_are_validated_without_reordering_rows(tmp_path: Path)
     manifest = translate_ragtruth(replace(config, reference_split_assignments=reference_path), translator=FakeTranslator())
     assert manifest["split_assignment_validation"]["checked"] is True
     assert pd.read_parquet(config.output_dir / "dataset.parquet")["example_id"].tolist() == source["example_id"].tolist()
+
+
+def test_resume_completes_an_integrity_checked_validating_manifest(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    source = _write_source(config, rows=12)
+    source.loc[10:, "split"] = "test"
+    source.to_parquet(config.input_path, index=False)
+    digest = hashlib.sha256(config.input_path.read_bytes()).hexdigest()
+    assert config.manifest_path is not None
+    config.manifest_path.write_text(json.dumps({"schema_version": "ragtruth-qa-training-view-deduplicated-v1", "signature": "source", "artifacts": {"dataset.parquet": digest}}), encoding="utf-8")
+    rows, metadata = load_ragtruth_parquet(config.input_path, manifest_path=config.manifest_path, expected_signature="source")
+    reference = split_ragtruth_parquet(rows, metadata, split_seed=42, validation_fraction=.15, max_test_sources=None)
+    reference_path = tmp_path / "assignments.parquet"
+    reference.assignments.to_parquet(reference_path, index=False)
+    config = replace(config, reference_split_assignments=reference_path)
+    translate_ragtruth(config, translator=FakeTranslator())
+
+    manifest_path = config.output_dir / "manifest.json"
+    pending = json.loads(manifest_path.read_text(encoding="utf-8"))
+    pending["status"] = "validating"
+    manifest_path.write_text(json.dumps(pending), encoding="utf-8")
+
+    recovery_translator = FakeTranslator()
+    resumed = translate_ragtruth(config, translator=recovery_translator, resume=True)
+
+    assert resumed["status"] == "completed"
+    assert resumed["split_assignment_validation"]["checked"] is True
+    assert recovery_translator.calls == []

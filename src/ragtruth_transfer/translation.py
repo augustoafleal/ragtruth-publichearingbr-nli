@@ -506,13 +506,19 @@ def _translate_parquet(
         if not output_path.is_file() or not manifest_path.is_file():
             raise ValueError("Output Parquet parcialmente existente; não é seguro retomar")
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if existing.get("run_signature") != run_signature or existing.get("status") != "completed":
+        status = existing.get("status")
+        if existing.get("run_signature") != run_signature or status not in {"completed", "validating"}:
             raise ValueError("Output Parquet existente é incompatível com a configuração")
         for relative, expected in dict(existing.get("artifacts", {})).items():
             candidate = config.output_dir / relative
             if not candidate.is_file() or _sha256_file(candidate) != str(expected):
                 raise ValueError("Artefato do Output Parquet existente diverge do manifesto")
-        _assert_same_split_assignments(config, output_path, manifest_path)
+        split_check = _assert_same_split_assignments(config, output_path, manifest_path)
+        if status == "validating":
+            if split_check is not None:
+                existing["split_assignment_validation"] = split_check
+            existing["status"] = "completed"
+            _write_text_atomic(manifest_path, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
         return existing
 
     texts = _parquet_texts(frame)
