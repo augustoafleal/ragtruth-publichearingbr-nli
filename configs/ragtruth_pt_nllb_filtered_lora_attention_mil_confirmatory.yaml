@@ -68,7 +68,7 @@ evaluation:
 expected_dataset_sha256: null
 expected_dataset_signature: ee8b7c597e51e120
 expected_schema: ragtruth-qa-training-view-deduplicated-v1
-expected_split_signature: null
+expected_split_signature: 611cd01cd5d41e18
 zero_shot_config: ../configs/ragtruth_pt_nllb_filtered_to_publichearing_zero_shot.yaml
 reference_dir: ../results/publichearing_lora_attention_mil/741ed3152c2175e7
 protocol_name: ragtruth_pt_nllb_confirmatory

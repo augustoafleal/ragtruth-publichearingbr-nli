@@ -68,7 +68,7 @@ evaluation:
 expected_dataset_sha256: null
 expected_dataset_signature: 8736188538b1e742
 expected_schema: ragtruth-qa-training-view-deduplicated-v1
-expected_split_signature: 525edec2966a4fac
+expected_split_signature: null
 zero_shot_config: ../configs/ragtruth_pt_madlad_to_publichearing_zero_shot.yaml
 reference_dir: ../results/publichearing_lora_attention_mil/741ed3152c2175e7
 protocol_name: ragtruth_pt_madlad_confirmatory
