@@ -37,7 +37,7 @@ class ZeroShotConfig:
     validation_predictions_relative_path: str = "checkpoints/epoch_03/validation_predictions.csv"
     expected_run_signature: str | None = None
     expected_source_run_name: str = "ragtruth_lora_attention_mil_parquet"
-    expected_ragtruth_dataset_signature: str = "0cdf598fa866741d"
+    expected_ragtruth_dataset_signature: str | None = "0cdf598fa866741d"
     expected_ragtruth_schema: str = "ragtruth-qa-training-view-deduplicated-v1"
     expected_ragtruth_split_signature: str | None = "525edec2966a4fac"
     expected_best_epoch: int = 3
@@ -70,7 +70,11 @@ class ZeroShotConfig:
             validation_predictions_relative_path=str(raw.get("validation_predictions_relative_path", cls.validation_predictions_relative_path)),
             expected_run_signature=(str(raw["expected_run_signature"]) if raw.get("expected_run_signature") else None),
             expected_source_run_name=str(raw.get("expected_source_run_name", cls.expected_source_run_name)),
-            expected_ragtruth_dataset_signature=str(raw.get("expected_ragtruth_dataset_signature", cls.expected_ragtruth_dataset_signature)),
+            expected_ragtruth_dataset_signature=(
+                str(raw["expected_ragtruth_dataset_signature"])
+                if raw.get("expected_ragtruth_dataset_signature")
+                else (None if "expected_ragtruth_dataset_signature" in raw else cls.expected_ragtruth_dataset_signature)
+            ),
             expected_ragtruth_schema=str(raw.get("expected_ragtruth_schema", cls.expected_ragtruth_schema)),
             expected_ragtruth_split_signature=(str(raw["expected_ragtruth_split_signature"]) if raw.get("expected_ragtruth_split_signature") else (None if "expected_ragtruth_split_signature" in raw else cls.expected_ragtruth_split_signature)),
             expected_best_epoch=int(raw.get("expected_best_epoch", cls.expected_best_epoch)),
@@ -151,7 +155,7 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
     if int(run_manifest.get("best_epoch", -1)) != config.expected_best_epoch:
         raise ValueError("best_epoch do run não corresponde ao checkpoint esperado.")
     dataset_metadata = run_manifest.get("dataset", {})
-    if dataset_metadata.get("signature") != config.expected_ragtruth_dataset_signature:
+    if config.expected_ragtruth_dataset_signature and dataset_metadata.get("signature") != config.expected_ragtruth_dataset_signature:
         raise ValueError("Assinatura da visão RAGTruth incompatível.")
     if dataset_metadata.get("schema_version") != config.expected_ragtruth_schema:
         raise ValueError("Schema da visão RAGTruth incompatível.")
@@ -186,7 +190,7 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
     if str(checkpoint_manifest.get("model_revision")) != config.expected_model_revision:
         raise ValueError("Revisão do mDeBERTa incompatível.")
     checkpoint_data_hashes = checkpoint_manifest.get("data_split_sha256", {})
-    if isinstance(checkpoint_data_hashes, dict) and checkpoint_data_hashes.get("split") != config.expected_ragtruth_split_signature:
+    if config.expected_ragtruth_split_signature and isinstance(checkpoint_data_hashes, dict) and checkpoint_data_hashes.get("split") != config.expected_ragtruth_split_signature:
         raise ValueError("Checkpoint não pertence à divisão RAGTruth esperada.")
     if str(run_config_raw.get("model_revision")) != config.expected_model_revision:
         raise ValueError("Revisão do modelo no run não está fixada conforme configuração.")

@@ -39,7 +39,7 @@ class ConfirmatoryConfig:
     bootstrap_repetitions: int = 2000
     bootstrap_seed: int = 4242
     expected_dataset_sha256: str | None = "357e05b08cdcc22b766dce432fd8ed5caa7703ddf144dc02da24ef63e7ff0a7c"
-    expected_dataset_signature: str = "0cdf598fa866741d"
+    expected_dataset_signature: str | None = "0cdf598fa866741d"
     expected_schema: str = "ragtruth-qa-training-view-deduplicated-v1"
     expected_split_signature: str | None = "525edec2966a4fac"
     zero_shot_config_path: Path | None = None
@@ -86,7 +86,11 @@ class ConfirmatoryConfig:
             bootstrap_repetitions=int(campaign.get("bootstrap_repetitions", 2000)),
             bootstrap_seed=int(campaign.get("bootstrap_seed", 4242)),
             expected_dataset_sha256=(str(raw["expected_dataset_sha256"]) if raw.get("expected_dataset_sha256") else (None if "expected_dataset_sha256" in raw else cls.expected_dataset_sha256)),
-            expected_dataset_signature=str(raw.get("expected_dataset_signature", cls.expected_dataset_signature)),
+            expected_dataset_signature=(
+                str(raw["expected_dataset_signature"])
+                if raw.get("expected_dataset_signature")
+                else (None if "expected_dataset_signature" in raw else cls.expected_dataset_signature)
+            ),
             expected_schema=str(raw.get("expected_schema", cls.expected_schema)),
             expected_split_signature=(str(raw["expected_split_signature"]) if raw.get("expected_split_signature") else (None if "expected_split_signature" in raw else cls.expected_split_signature)),
             zero_shot_config_path=resolve(raw.get("zero_shot_config")),

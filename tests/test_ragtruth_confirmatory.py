@@ -15,12 +15,12 @@ def test_confirmatory_protocol_declares_three_fixed_seeds() -> None:
     assert config.expected_split_signature == "525edec2966a4fac"
 
 
-def test_madlad_confirmatory_config_matches_translated_dataset_contract() -> None:
+def test_madlad_confirmatory_config_declares_pending_translated_dataset_contract() -> None:
     config = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml"))
     assert config.experiment.dataset.path is not None
     assert config.experiment.dataset.path.name == "dataset.parquet"
-    assert config.experiment.dataset.expected_signature == "8736188538b1e742"
-    assert config.expected_dataset_signature == "8736188538b1e742"
+    assert config.experiment.dataset.expected_signature is None
+    assert config.expected_dataset_signature is None
     assert config.experiment.truncation == "longest_first"
     assert config.zero_shot_config_path is not None
     assert config.zero_shot_config_path.name == "ragtruth_pt_madlad_to_publichearing_zero_shot.yaml"

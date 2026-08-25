@@ -1,8 +1,16 @@
-run_name: ragtruth_pt_madlad_lora_attention_mil_confirmatory
-output_root: ../runs/ragtruth_pt_madlad_confirmatory
+# Prepared future condition.  The MADLAD Parquet is materialized by the
+# official translation workflow before this config can be validated/executed.
+run_name: ragtruth_pt_madlad_lora_set_transformer_confirmatory
+output_root: ../runs/ragtruth_pt_madlad_set_transformer_confirmatory
 model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
 model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
-architecture: gated_attention
+architecture: set_transformer
+pooling_type: set_transformer
+set_transformer:
+  num_sab_layers: 1
+  num_heads: 4
+  num_seeds: 1
+  ffn_dim: 128
 encoder_mode: lora
 max_length: 512
 truncation: longest_first
@@ -69,6 +77,6 @@ expected_dataset_sha256: null
 expected_dataset_signature: null
 expected_schema: ragtruth-qa-training-view-deduplicated-v1
 expected_split_signature: null
-zero_shot_config: ../configs/ragtruth_pt_madlad_to_publichearing_zero_shot.yaml
+zero_shot_config: ../configs/ragtruth_pt_madlad_set_transformer_to_publichearing_zero_shot.yaml
 reference_dir: ../results/publichearing_lora_attention_mil/741ed3152c2175e7
-protocol_name: ragtruth_pt_madlad_confirmatory
+protocol_name: ragtruth_pt_madlad_set_transformer_confirmatory
