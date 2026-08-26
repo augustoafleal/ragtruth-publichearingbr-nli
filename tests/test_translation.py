@@ -73,7 +73,7 @@ def test_existing_backend_configs_use_the_canonical_parquet() -> None:
     assert configs[0].translation.model_name == "facebook/nllb-200-distilled-600M"
     assert configs[0].translation.batch_size == 16 and configs[0].translation.num_beams == 4
     assert configs[2].translation.model_name == "google/madlad400-3b-mt"
-    assert configs[2].translation.batch_size == 16 and configs[2].translation.num_beams == 4
+    assert configs[2].translation.batch_size == 8 and configs[2].translation.num_beams == 4
     assert configs[3].translation.batch_size == 2 and configs[3].translation.num_beams == 4
 
 
