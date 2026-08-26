@@ -1,0 +1,46 @@
+analysis:
+  name: publichearing_pt_nllb_attention_vs_set_thresholded_bootstrap
+  type: thresholded_paired_grouped_bootstrap
+  description: PT NLLB mDeBERTa Attention MIL versus Set Transformer on PublicHearingBR
+protocol:
+  analysis_type: thresholded_paired_grouped_bootstrap
+  group_key: hearing_id
+  paired: true
+  delta: set_transformer - attention
+  threshold_provenance: RAGTruth validation only
+  threshold_reoptimization: false
+inputs:
+  attention:
+    label: Attention MIL
+    path: ../runs/ragtruth_pt_nllb_confirmatory/70bb1cce59b8c824
+    expected_signature: 70bb1cce59b8c824
+    config_path: ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
+    expected_pooling: attention
+    score_column: probability
+  set_transformer:
+    label: Set Transformer
+    path: ../runs/ragtruth_pt_nllb_set_transformer_confirmatory/29ec472694bb61a8
+    expected_signature: 29ec472694bb61a8
+    config_path: ragtruth_pt_nllb_lora_set_transformer_confirmatory.yaml
+    expected_pooling: set_transformer
+    score_column: probability
+  seeds: [0, 1, 2]
+threshold_regimes: [best_f1, fpr10]
+population:
+  examples: 4235
+  positives: 501
+  hearings: 206
+  publichearing_dataset_signature: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
+  ragtruth_dataset_signature: ee8b7c597e51e120
+bootstrap:
+  n_replicates: 10000
+  seed: 20260815
+  confidence_level: 0.95
+  ci_method: percentile
+  preserve_group_multiplicity: true
+  same_samples_across_methods: true
+  same_samples_across_seeds: true
+  same_samples_across_threshold_regimes: true
+  reestimate_thresholds: false
+output:
+  root: ../runs/publichearing_pt_nllb_attention_vs_set_thresholded_bootstrap

@@ -6,7 +6,13 @@ import argparse
 import json
 from pathlib import Path
 
-from ragtruth_transfer.thresholded_paired_grouped_bootstrap import ThresholdedBootstrapConfig, run_thresholded_bootstrap
+from ragtruth_transfer.thresholded_paired_grouped_bootstrap import (
+    GenericThresholdedBootstrapConfig,
+    ThresholdedBootstrapConfig,
+    load_thresholded_config,
+    run_generic_thresholded_bootstrap,
+    run_thresholded_bootstrap,
+)
 
 
 def main() -> None:
@@ -15,9 +21,13 @@ def main() -> None:
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
-    result = run_thresholded_bootstrap(
-        ThresholdedBootstrapConfig.from_yaml(args.config), validate_only=args.validate_only, resume=args.resume
-    )
+    config = load_thresholded_config(args.config)
+    if isinstance(config, GenericThresholdedBootstrapConfig):
+        if args.resume:
+            raise SystemExit("--resume ainda não é suportado no modo genérico; a saída nunca é sobrescrita.")
+        result = run_generic_thresholded_bootstrap(config, validate_only=args.validate_only)
+    else:
+        result = run_thresholded_bootstrap(config, validate_only=args.validate_only, resume=args.resume)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
