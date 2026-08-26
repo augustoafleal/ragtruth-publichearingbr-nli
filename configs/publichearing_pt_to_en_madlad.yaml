@@ -1,0 +1,23 @@
+translation:
+  translator: madlad
+  model_name: google/madlad400-3b-mt
+  model_revision: null
+  source_language: pt
+  target_language: en
+  batch_size: 8
+  num_beams: 4
+  max_input_tokens: 480
+  max_new_tokens: 512
+  device: auto
+data:
+  adapter: publichearing_nli_jsonl
+  input_path: ~/.cache/huggingface/hub/datasets--unicamp-dl--PublicHearingBR/snapshots/2f84a44bc34df483e25c987f0ff86caad0ab3433/PublicHearingBR_NLI.jsonl
+  output_dir: ../data/processed/publichearing_nli_pt_to_en_madlad
+  output_filename: PublicHearingBR_NLI.jsonl
+  cache_path: ../data/processed/publichearing_nli_pt_to_en_madlad/.translation_cache.sqlite3
+  expected_source_sha256: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
+  expected_source_revision: 2f84a44bc34df483e25c987f0ff86caad0ab3433
+  expected_top_level_rows: 206
+  expected_modelable_examples: 4235
+  expected_positives: 501
+  expected_hearings: 206

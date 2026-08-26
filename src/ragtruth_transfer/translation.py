@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import time
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -13,12 +14,14 @@ from typing import Any, Protocol
 import yaml
 import pandas as pd
 
+from .io_utils import read_jsonl
 from .ragtruth_parquet import load_ragtruth_parquet, split_ragtruth_parquet, validate_training_view_manifest
 from .translation_qa import classify_translation_pair
 
 TRANSLATION_CACHE_SCHEMA = "ragtruth-translation-cache-v1"
 TRANSLATION_MANIFEST_SCHEMA = "ragtruth-translated-v1"
 PARQUET_TRANSLATION_MANIFEST_SCHEMA = "ragtruth-qa-training-view-deduplicated-v1"
+PUBLICHEARING_TRANSLATION_MANIFEST_SCHEMA = "publichearing-nli-translation-v1"
 
 
 class BatchTranslator(Protocol):
@@ -66,8 +69,19 @@ class TranslationConfig:
     expected_source_rows: int | None = None
     reference_split_assignments: Path | None = None
     expected_split_signature: str | None = None
+    expected_source_revision: str | None = None
+    expected_top_level_rows: int | None = None
+    expected_modelable_examples: int | None = None
+    expected_positives: int | None = None
+    expected_hearings: int | None = None
+    dataset_adapter: str = "ragtruth_parquet"
+    output_filename: str = "dataset.parquet"
 
     def __post_init__(self) -> None:
+        if self.dataset_adapter not in {"ragtruth_parquet", "publichearing_nli_jsonl"}:
+            raise ValueError(f"Adapter de dataset desconhecido: {self.dataset_adapter}")
+        if not self.output_filename or Path(self.output_filename).name != self.output_filename:
+            raise ValueError("data.output_filename deve ser um nome de arquivo simples")
         if self.max_examples_per_split is not None and self.max_examples_per_split < 1:
             raise ValueError("data.max_examples_per_split deve ser positivo")
 
@@ -112,9 +126,12 @@ class TranslationConfig:
         output_dir = resolve(data_raw.get("output_dir"))
         input_path = resolve(data_raw.get("input_path"))
         if output_dir is None or input_path is None:
-            raise ValueError("O pipeline oficial exige data.input_path e data.output_dir Parquet")
-        if "input_dir" in data_raw or "splits" in data_raw or "sample_fraction" in data_raw:
-            raise ValueError("O pipeline oficial não aceita input_dir, splits ou sample_fraction JSONL")
+            raise ValueError("O pipeline oficial exige data.input_path e data.output_dir")
+        dataset_adapter = str(data_raw.get("dataset_adapter", data_raw.get("adapter", "ragtruth_parquet"))).lower()
+        default_filename = "PublicHearingBR_NLI.jsonl" if dataset_adapter == "publichearing_nli_jsonl" else "dataset.parquet"
+        output_filename = str(data_raw.get("output_filename", default_filename))
+        if dataset_adapter == "ragtruth_parquet" and ("input_dir" in data_raw or "splits" in data_raw or "sample_fraction" in data_raw):
+            raise ValueError("O pipeline Parquet não aceita input_dir, splits ou sample_fraction")
         cache_path = resolve(data_raw.get("cache_path"))
         has_smoke_limit = "max_examples_per_split" in data_raw and data_raw.get("max_examples_per_split") is not None
         max_examples_per_split = (
@@ -133,18 +150,25 @@ class TranslationConfig:
             model_revision=(str(translation_raw["model_revision"]) if translation_raw.get("model_revision") else None),
         )
         return cls(
-            settings,
-            input_path,
-            output_dir,
-            cache_path,
-            max_examples_per_split,
-            resolve(data_raw.get("manifest_path")),
-            str(data_raw["expected_source_sha256"]) if data_raw.get("expected_source_sha256") else None,
-            str(data_raw["expected_source_signature"]) if data_raw.get("expected_source_signature") else None,
-            str(data_raw["expected_source_schema"]) if data_raw.get("expected_source_schema") else None,
-            int(data_raw["expected_source_rows"]) if data_raw.get("expected_source_rows") is not None else None,
-            resolve(data_raw.get("reference_split_assignments")),
-            str(data_raw["expected_split_signature"]) if data_raw.get("expected_split_signature") else None,
+            translation=settings,
+            input_path=input_path,
+            output_dir=output_dir,
+            cache_path=cache_path,
+            max_examples_per_split=max_examples_per_split,
+            manifest_path=resolve(data_raw.get("manifest_path")),
+            expected_source_sha256=str(data_raw["expected_source_sha256"]) if data_raw.get("expected_source_sha256") else None,
+            expected_source_signature=str(data_raw["expected_source_signature"]) if data_raw.get("expected_source_signature") else None,
+            expected_source_schema=str(data_raw["expected_source_schema"]) if data_raw.get("expected_source_schema") else None,
+            expected_source_rows=int(data_raw["expected_source_rows"]) if data_raw.get("expected_source_rows") is not None else None,
+            reference_split_assignments=resolve(data_raw.get("reference_split_assignments")),
+            expected_split_signature=str(data_raw["expected_split_signature"]) if data_raw.get("expected_split_signature") else None,
+            expected_source_revision=str(data_raw["expected_source_revision"]) if data_raw.get("expected_source_revision") else None,
+            expected_top_level_rows=int(data_raw["expected_top_level_rows"]) if data_raw.get("expected_top_level_rows") is not None else None,
+            expected_modelable_examples=int(data_raw["expected_modelable_examples"]) if data_raw.get("expected_modelable_examples") is not None else None,
+            expected_positives=int(data_raw["expected_positives"]) if data_raw.get("expected_positives") is not None else None,
+            expected_hearings=int(data_raw["expected_hearings"]) if data_raw.get("expected_hearings") is not None else None,
+            dataset_adapter=dataset_adapter,
+            output_filename=output_filename,
         )
 
 
@@ -267,7 +291,7 @@ def create_translator(settings: TranslationSettings) -> BatchTranslator:
     raise ValueError(f"Tradutor desconhecido: {settings.translator}. Use nllb ou madlad.")
 
 
-def _config_signature(settings: TranslationSettings) -> str:
+def _config_signature(settings: TranslationSettings, dataset_adapter: str | None = None) -> str:
     payload = {
         "translator": settings.translator,
         "model_name": settings.model_name,
@@ -279,6 +303,8 @@ def _config_signature(settings: TranslationSettings) -> str:
         "max_new_tokens": settings.max_new_tokens,
         "device": settings.device,
     }
+    if dataset_adapter and dataset_adapter != "ragtruth_parquet":
+        payload["dataset_adapter"] = dataset_adapter
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -430,7 +456,7 @@ def _parquet_texts(frame: pd.DataFrame) -> list[str]:
 
 
 def _translation_signature(config: TranslationConfig, input_signature: str) -> tuple[str, str, str]:
-    config_signature = _config_signature(config.translation)
+    config_signature = _config_signature(config.translation, config.dataset_adapter)
     selection = {"max_examples": config.max_examples_per_split}
     selection_signature = hashlib.sha256(json.dumps(selection, sort_keys=True).encode("utf-8")).hexdigest()
     return config_signature, selection_signature, hashlib.sha256(
@@ -599,7 +625,286 @@ def _translate_parquet(
     return manifest
 
 
+def _publichearing_modelable_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        hearing_id = str(record.get("id", ""))
+        metadata = record.get("metadados_extraidos")
+        if not isinstance(metadata, dict):
+            raise ValueError("Registro PublicHearingBR sem metadados_extraidos")
+        people = metadata.get("envolvidos", [])
+        if not isinstance(people, list):
+            raise ValueError("metadados_extraidos.envolvidos deve ser uma lista")
+        for person_index, person in enumerate(people):
+            if not isinstance(person, dict):
+                raise ValueError("Envolvido PublicHearingBR inválido")
+            opinions = person.get("opinioes", [])
+            if not isinstance(opinions, list):
+                raise ValueError("envolvidos[].opinioes deve ser uma lista")
+            for opinion_index, opinion in enumerate(opinions):
+                if not isinstance(opinion, dict):
+                    raise ValueError("Opinião PublicHearingBR inválida")
+                chunks = opinion.get("chunks_proximos") or []
+                claim = opinion.get("opiniao", "")
+                if not isinstance(chunks, list) or len(chunks) != 4:
+                    continue
+                if not isinstance(claim, str) or not claim.strip() or any(not isinstance(chunk, str) or not chunk.strip() for chunk in chunks):
+                    continue
+                rows.append({
+                    "example_id": f"{hearing_id}:{person_index}:{opinion_index}",
+                    "hearing_id": hearing_id,
+                    "person_index": person_index,
+                    "opinion_index": opinion_index,
+                    "claim": claim,
+                    "chunks": list(chunks),
+                    "label": int(bool((opinion.get("verificacao_alucinacao") or {}).get("verificacao_manual"))),
+                })
+    return rows
+
+
+def _publichearing_source(config: TranslationConfig) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], str]:
+    if not config.input_path.is_file():
+        raise FileNotFoundError(f"PublicHearingBR não encontrado: {config.input_path}")
+    source_sha = _sha256_file(config.input_path)
+    if config.expected_source_sha256 and source_sha != config.expected_source_sha256:
+        raise ValueError("SHA-256 do PublicHearingBR de origem diverge da configuração")
+    records = read_jsonl(config.input_path)
+    if not records:
+        raise ValueError("PublicHearingBR de origem vazio")
+    ids = [str(record.get("id", "")) for record in records]
+    if any(not value for value in ids) or len(set(ids)) != len(ids):
+        raise ValueError("IDs de hearings PublicHearingBR ausentes ou duplicados")
+    rows = _publichearing_modelable_rows(records)
+    positives = int(sum(row["label"] for row in rows))
+    hearings = len({row["hearing_id"] for row in rows})
+    counts = {
+        "top_level_rows": len(records),
+        "modelable_examples": len(rows),
+        "positives": positives,
+        "hearings": hearings,
+        "unique_example_ids": len({row["example_id"] for row in rows}),
+    }
+    expected = {
+        "top_level_rows": config.expected_top_level_rows,
+        "modelable_examples": config.expected_modelable_examples,
+        "positives": config.expected_positives,
+        "hearings": config.expected_hearings,
+    }
+    for key, value in expected.items():
+        if value is not None and counts[key] != value:
+            raise ValueError(f"Contagem PublicHearingBR inesperada em {key}: {counts[key]} != {value}")
+    lineage = {
+        "path": str(config.input_path.resolve()),
+        "sha256": source_sha,
+        "revision": config.expected_source_revision,
+        **counts,
+    }
+    input_signature = _input_signature({config.input_path.name: source_sha}, ())
+    return records, rows, lineage, input_signature
+
+
+def _publichearing_texts(rows: list[dict[str, Any]]) -> list[str]:
+    texts: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for text in [row["claim"], *row["chunks"]]:
+            if text not in seen:
+                seen.add(text)
+                texts.append(text)
+    return texts
+
+
+def _publichearing_pairs(records: list[dict[str, Any]]) -> list[tuple[str, str, int | None, str, str]]:
+    pairs: list[tuple[str, str, int | None, str, str]] = []
+    for row in _publichearing_modelable_rows(records):
+        pairs.append((row["example_id"], "claim", None, row["claim"], row["claim"]))
+        pairs.extend((row["example_id"], f"chunk_{index}", index, text, text) for index, text in enumerate(row["chunks"], start=1))
+    return pairs
+
+
+def _qa_pairs(pairs: list[tuple[str, str, int | None, str, str]]) -> tuple[dict[str, Any], pd.DataFrame]:
+    flags: list[dict[str, Any]] = []
+    counts = {"low_ratio": 0, "high_ratio": 0, "high_confidence_repetition": 0, "empty_translation": 0, "control_character_issue": 0, "exclusion_candidate": 0}
+    for example_id, field, slot, original, rendered in pairs:
+        metrics = classify_translation_pair(original, rendered)
+        for name in counts:
+            counts[name] += int(bool(metrics[name]))
+        if metrics["exclusion_candidate"] or metrics["empty_translation"] or metrics["control_character_issue"]:
+            flags.append({"example_id": example_id, "field": field, "slot": slot, **metrics})
+    columns = ["example_id", "field", "slot", "source_normalized", "translated_normalized", "source_chars", "translated_chars", "source_words", "translated_words", "length_ratio", "empty_translation", "identical_to_source", "low_ratio", "high_ratio", "source_has_repetition", "translation_has_repetition", "source_repetition_metric", "translation_repetition_metric", "repetition_excess", "repetition_severity", "translation_added_repetition", "high_confidence_repetition", "control_character_issue", "exclusion_candidate"]
+    return {"pairs": len(pairs), "flags": counts, "flagged_pairs": len(flags), "rows_removed": 0, "filtering_applied": False}, pd.DataFrame(flags, columns=columns)
+
+
+def _translate_publichearing_records(records: list[dict[str, Any]], rows: list[dict[str, Any]], translations: dict[str, str]) -> list[dict[str, Any]]:
+    result = copy.deepcopy(records)
+    for row in _publichearing_modelable_rows(result):
+        opinion = result[[str(item.get("id")) for item in result].index(row["hearing_id"])]
+        people = opinion["metadados_extraidos"]["envolvidos"]
+        entry = people[row["person_index"]]["opinioes"][row["opinion_index"]]
+        entry["opiniao"] = translations[_text_hash(row["claim"])]
+        entry["chunks_proximos"] = [translations[_text_hash(text)] for text in row["chunks"]]
+    return result
+
+
+def _publichearing_alignment(source: list[dict[str, Any]], translated: list[dict[str, Any]], expected: dict[str, int | None]) -> dict[str, Any]:
+    if len(source) != len(translated):
+        raise ValueError("Quantidade de hearings alterada pela tradução")
+    source_rows = _publichearing_modelable_rows(source)
+    translated_rows = _publichearing_modelable_rows(translated)
+    if [(row["hearing_id"], row["person_index"], row["opinion_index"]) for row in source_rows] != [(row["hearing_id"], row["person_index"], row["opinion_index"]) for row in translated_rows]:
+        raise ValueError("IDs ou ordenação dos exemplos alterados pela tradução")
+    translated_by_id = {row["example_id"]: row for row in translated_rows}
+    for source_record, translated_record in zip(source, translated):
+        if source_record.get("id") != translated_record.get("id"):
+            raise ValueError("IDs de hearings alterados pela tradução")
+        source_metadata = source_record["metadados_extraidos"]
+        translated_metadata = translated_record["metadados_extraidos"]
+        source_metadata_untranslated = {key: value for key, value in source_metadata.items() if key != "envolvidos"}
+        translated_metadata_untranslated = {key: value for key, value in translated_metadata.items() if key != "envolvidos"}
+        if source_metadata_untranslated != translated_metadata_untranslated:
+            raise ValueError("Metadados de hearing alterados pela tradução")
+        source_people = source_metadata.get("envolvidos", [])
+        translated_people = translated_metadata.get("envolvidos", [])
+        if len(source_people) != len(translated_people):
+            raise ValueError("Número de envolvidos alterado pela tradução")
+        for source_person, translated_person in zip(source_people, translated_people):
+            source_person_untranslated = {key: value for key, value in source_person.items() if key != "opinioes"}
+            translated_person_untranslated = {key: value for key, value in translated_person.items() if key != "opinioes"}
+            if source_person_untranslated != translated_person_untranslated:
+                raise ValueError("Metadados de envolvidos alterados pela tradução")
+            source_opinions = source_person.get("opinioes", [])
+            translated_opinions = translated_person.get("opinioes", [])
+            if len(source_opinions) != len(translated_opinions):
+                raise ValueError("Número de opiniões alterado pela tradução")
+            for source_opinion, translated_opinion in zip(source_opinions, translated_opinions):
+                if source_opinion.get("verificacao_alucinacao") != translated_opinion.get("verificacao_alucinacao"):
+                    raise ValueError("Labels alterados pela tradução")
+                source_opinion_untranslated = {key: value for key, value in source_opinion.items() if key not in {"opiniao", "chunks_proximos"}}
+                translated_opinion_untranslated = {key: value for key, value in translated_opinion.items() if key not in {"opiniao", "chunks_proximos"}}
+                if source_opinion_untranslated != translated_opinion_untranslated:
+                    raise ValueError("Campos de opinião alterados pela tradução")
+                source_chunks = source_opinion.get("chunks_proximos")
+                translated_chunks = translated_opinion.get("chunks_proximos")
+                if not isinstance(source_chunks, list) or source_chunks != translated_chunks and len(source_chunks) != len(translated_chunks or []):
+                    raise ValueError("Estrutura de chunks alterada pela tradução")
+                if len(source_chunks) != 4 or not str(source_opinion.get("opiniao", "")).strip() or any(not isinstance(chunk, str) or not chunk.strip() for chunk in source_chunks):
+                    if source_opinion != translated_opinion:
+                        raise ValueError("Entrada inválida/empty foi alterada pela tradução")
+    for row in source_rows:
+        candidate = translated_by_id[row["example_id"]]
+        if not str(candidate["claim"]).strip() or any(not str(chunk).strip() for chunk in candidate["chunks"]):
+            raise ValueError("Tradução gerou campo vazio")
+    counts = {"top_level_rows": len(translated), "modelable_examples": len(translated_rows), "positives": sum(row["label"] for row in translated_rows), "hearings": len({row["hearing_id"] for row in translated_rows}), "unique_example_ids": len(translated_by_id)}
+    for key, value in expected.items():
+        if value is not None and counts[key] != value:
+            raise ValueError(f"Contagem de alinhamento inesperada em {key}: {counts[key]} != {value}")
+    return {"status": "passed", "top_level_order_preserved": True, "metadata_order_preserved": True, "labels_preserved": True, "invalid_slots_preserved": True, "chunk_order_preserved": True, "counts": counts}
+
+
+def validate_publichearing_translation(config: TranslationConfig) -> dict[str, Any]:
+    if config.dataset_adapter != "publichearing_nli_jsonl":
+        raise ValueError("validate_publichearing_translation exige o adapter JSONL PublicHearingBR")
+    source, rows, lineage, input_signature = _publichearing_source(config)
+    output_path = config.output_dir / config.output_filename
+    manifest_path = config.output_dir / "manifest.json"
+    if not output_path.is_file() or not manifest_path.is_file():
+        raise FileNotFoundError("Output ou manifesto da tradução PublicHearingBR não encontrado")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("status") != "completed":
+        raise ValueError("Manifesto da tradução PublicHearingBR não está completed")
+    if _sha256_file(output_path) != manifest.get("output", {}).get("sha256"):
+        raise ValueError("SHA do output não coincide com o manifesto")
+    translated = read_jsonl(output_path)
+    audit = _publichearing_alignment(source, translated, {"top_level_rows": config.expected_top_level_rows, "modelable_examples": config.expected_modelable_examples, "positives": config.expected_positives, "hearings": config.expected_hearings})
+    return {"status": "valid", "model_loaded": False, "source": lineage, "output": {"path": str(output_path), "sha256": _sha256_file(output_path)}, "alignment_audit": audit, "manifest": manifest}
+
+
+def _translate_publichearing(config: TranslationConfig, translator: BatchTranslator | None, *, resume: bool) -> dict[str, Any]:
+    source, rows, lineage, input_signature = _publichearing_source(config)
+    config_signature, selection_signature, run_signature = _translation_signature(config, input_signature)
+    output_path = config.output_dir / config.output_filename
+    manifest_path = config.output_dir / "manifest.json"
+    if output_path.exists() or manifest_path.exists():
+        if not resume:
+            raise FileExistsError(f"Output JSONL já existe: {config.output_dir}. Use --resume apenas para output compatível.")
+        existing = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+        if existing.get("run_signature") != run_signature or existing.get("status") != "completed":
+            raise ValueError("Output JSONL existente é incompatível ou incompleto")
+        return existing
+    texts = _publichearing_texts(rows)
+    hashes = {_text_hash(text): text for text in texts}
+    cache_path = config.cache_path or config.output_dir / ".translation_cache.sqlite3"
+    translations: dict[str, str] = {}
+    cache_hits = 0
+    cache_misses = 0
+    active: BatchTranslator | None = None
+    with TranslationCache(cache_path, config_signature, input_signature) as cache:
+        translations.update(cache.get_many(list(hashes)))
+        cache_hits = len(translations)
+        missing = [text for text in texts if _text_hash(text) not in translations]
+        cache_misses = len(missing)
+        if missing:
+            active = translator or create_translator(config.translation)
+            for start in range(0, len(missing), config.translation.batch_size):
+                batch = missing[start : start + config.translation.batch_size]
+                rendered = active.translate_batch(batch)
+                if len(rendered) != len(batch) or any(not isinstance(value, str) or not value.strip() for value in rendered):
+                    raise RuntimeError("Tradutor retornou resultado incompleto ou vazio")
+                values = {_text_hash(source_text): target for source_text, target in zip(batch, rendered)}
+                cache.put_many(values)
+                translations.update(values)
+    if set(hashes) != set(translations):
+        raise RuntimeError("Traduções ausentes; nenhuma cópia silenciosa do texto fonte é permitida")
+    translated = _translate_publichearing_records(source, rows, translations)
+    audit = _publichearing_alignment(source, translated, {"top_level_rows": config.expected_top_level_rows, "modelable_examples": config.expected_modelable_examples, "positives": config.expected_positives, "hearings": config.expected_hearings})
+    output_text = "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in translated)
+    _write_text_atomic(output_path, output_text)
+    qa_pairs = []
+    for source_row, translated_row in zip(_publichearing_modelable_rows(source), _publichearing_modelable_rows(translated)):
+        qa_pairs.append((source_row["example_id"], "claim", None, source_row["claim"], translated_row["claim"]))
+        qa_pairs.extend((source_row["example_id"], f"chunk_{index}", index, original, rendered) for index, (original, rendered) in enumerate(zip(source_row["chunks"], translated_row["chunks"]), start=1))
+    qa_summary, qa_flags = _qa_pairs(qa_pairs)
+    qa_path = config.output_dir / "translation_qa.json"
+    flags_path = config.output_dir / "translation_qa_flags.parquet"
+    alignment_path = config.output_dir / "alignment_audit.json"
+    _write_text_atomic(qa_path, json.dumps(qa_summary, ensure_ascii=False, indent=2) + "\n")
+    _write_parquet_atomic(flags_path, qa_flags)
+    _write_text_atomic(alignment_path, json.dumps(audit, ensure_ascii=False, indent=2) + "\n")
+    manifest = {
+        "schema_version": PUBLICHEARING_TRANSLATION_MANIFEST_SCHEMA,
+        "status": "completed",
+        "signature": run_signature[:16],
+        "run_signature": run_signature,
+        "dataset_adapter": config.dataset_adapter,
+        "backend": config.translation.translator,
+        "model_name": config.translation.model_name,
+        "requested_model_revision": config.translation.model_revision,
+        **_runtime_manifest_fields(active),
+        "source_language": config.translation.source_language,
+        "target_language": config.translation.target_language,
+        "target_prefix": f"<2{config.translation.target_language}>" if config.translation.translator == "madlad" else None,
+        "source_revision": config.expected_source_revision,
+        "generation": {"num_beams": config.translation.num_beams, "max_input_tokens": config.translation.max_input_tokens, "max_new_tokens": config.translation.max_new_tokens, "batch_size": config.translation.batch_size, "sampling": False},
+        "source": lineage,
+        "output": {"path": str(output_path), "sha256": _sha256_file(output_path)},
+        "counts": {key: lineage[key] for key in ("top_level_rows", "modelable_examples", "positives", "hearings")},
+        "translated_fields": ["metadados_extraidos.envolvidos[].opinioes[].opiniao", "metadados_extraidos.envolvidos[].opinioes[].chunks_proximos[i] for valid four-slot entries"],
+        "translation_contract": {"retrieval_rerun": False, "chunking_rerun": False, "labels_preserved": True, "hearing_ids_preserved": True, "invalid_slots_preserved": True, "fallback_to_source_text": False},
+        "cache": {"path": str(cache_path), "hits": cache_hits, "misses": cache_misses, "config_signature": config_signature, "input_signature": input_signature},
+        "qa": qa_summary,
+        "alignment_audit": {"path": str(alignment_path), "sha256": _sha256_file(alignment_path), **audit},
+        "artifacts": {config.output_filename: _sha256_file(output_path), "translation_qa.json": _sha256_file(qa_path), "translation_qa_flags.parquet": _sha256_file(flags_path), "alignment_audit.json": _sha256_file(alignment_path)},
+    }
+    _write_text_atomic(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    return manifest
+
+
 def validate_translation_input(config: TranslationConfig) -> dict[str, Any]:
+    if config.dataset_adapter == "publichearing_nli_jsonl":
+        source, rows, lineage, input_signature = _publichearing_source(config)
+        output_path = config.output_dir / config.output_filename
+        manifest_path = config.output_dir / "manifest.json"
+        return {"status": "valid", "format": "jsonl", "dataset_adapter": config.dataset_adapter, "model_loaded": False, "rows": lineage["top_level_rows"], "modelable_examples": len(rows), "unique_texts": len(_publichearing_texts(rows)), "source": lineage, "input_signature": input_signature, "output": {"path": str(output_path), "collision": output_path.exists() or manifest_path.exists(), "manifest_path": str(manifest_path)}}
     frame, lineage, input_signature = _parquet_rows(config)
     return {"status": "valid", "format": "parquet", "model_loaded": False, "rows": len(frame), "unique_texts": len(_parquet_texts(frame)), "source": lineage, "input_signature": input_signature}
 
@@ -610,4 +915,6 @@ def translate_ragtruth(
     *,
     resume: bool = False,
 ) -> dict[str, Any]:
+    if config.dataset_adapter == "publichearing_nli_jsonl":
+        return _translate_publichearing(config, translator, resume=resume)
     return _translate_parquet(config, translator, resume=resume)

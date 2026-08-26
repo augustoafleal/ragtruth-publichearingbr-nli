@@ -45,6 +45,8 @@ class ConfirmatoryConfig:
     zero_shot_config_path: Path | None = None
     reference_dir: Path | None = None
     protocol_name: str = "ragtruth_confirmatory"
+    evaluation_output_root: Path | None = None
+    target_only: bool = False
 
     @classmethod
     def from_yaml(cls, path: Path) -> "ConfirmatoryConfig":
@@ -96,6 +98,8 @@ class ConfirmatoryConfig:
             zero_shot_config_path=resolve(raw.get("zero_shot_config")),
             reference_dir=resolve(raw.get("reference_dir")),
             protocol_name=str(raw.get("protocol_name", cls.protocol_name)),
+            evaluation_output_root=resolve(raw.get("evaluation_output_root")),
+            target_only=bool(evaluation.get("target_only", False)),
         )
 
     @property
@@ -261,7 +265,24 @@ def _seed_manifest_valid(seed_dir: Path) -> bool:
 def validate_only(config: ConfirmatoryConfig) -> dict[str, Any]:
     audit, split_signature = _validate_data(config)
     payload = config.protocol_payload(split_signature, audit["metadata"]["dataset_sha256"])
-    return {"status": "valid", "model_loaded": False, "cuda_initialized": False, "training_executed": False, "evaluation_executed": False, "protocol_signature": _signature(payload), "seeds": list(config.seeds), "data_audit": audit, "commands": {"train": "--phase train", "evaluate": "--phase evaluate", "aggregate": "--phase aggregate"}}
+    result: dict[str, Any] = {"status": "valid", "model_loaded": False, "cuda_initialized": False, "training_executed": False, "evaluation_executed": False, "protocol_signature": _signature(payload), "seeds": list(config.seeds), "data_audit": audit, "commands": {"train": "--phase train", "evaluate": "--phase evaluate", "aggregate": "--phase aggregate"}}
+    if config.evaluation_output_root is not None:
+        source_campaign = _campaign_dir(config, result["protocol_signature"])
+        if not all(_seed_manifest_valid(source_campaign / f"seed_{seed}") for seed in config.seeds):
+            raise RuntimeError("A avaliação target exige as três seeds históricas treinadas e válidas.")
+        if config.zero_shot_config_path is None:
+            raise ValueError("zero_shot_config é obrigatório para evaluate.")
+        zero_base = load_zero_shot_config(config.zero_shot_config_path)
+        seed_audits = []
+        for seed in config.seeds:
+            source_seed = source_campaign / f"seed_{seed}"
+            thresholds = _read_thresholds(source_seed)
+            run_manifest = json.loads((source_seed / "run_manifest.json").read_text(encoding="utf-8"))
+            checkpoint_rel = run_manifest["best_checkpoint"]
+            zero_cfg = replace(zero_base, ragtruth_run_dir=source_seed, checkpoint_relative_path=checkpoint_rel, validation_predictions_relative_path=f"{checkpoint_rel}/validation_predictions.csv", expected_run_signature=run_manifest.get("config_fingerprint"), expected_source_run_name=run_manifest["config"]["run_name"], expected_best_epoch=int(run_manifest["best_epoch"]), expected_ragtruth_dataset_signature=config.expected_dataset_signature, expected_ragtruth_schema=config.expected_schema, expected_ragtruth_split_signature=config.expected_split_signature, output_root=config.evaluation_output_root / f"seed_{seed}" / "publichearing_zero_shot", run_name=f"target_evaluation_seed_{seed}", seed=seed)
+            seed_audits.append({"seed": seed, "thresholds": thresholds, "zero_shot": run_zero_shot(zero_cfg, validate_only=True)})
+        result["evaluation_audit"] = {"target_only": config.target_only, "source_campaign_dir": str(source_campaign), "evaluation_output_root": str(config.evaluation_output_root.resolve()), "seeds": seed_audits}
+    return result
 
 
 def train_phase(config: ConfirmatoryConfig, *, resume: bool = False) -> dict[str, Any]:
@@ -319,6 +340,16 @@ def _thresholds(seed_dir: Path) -> dict[str, Any]:
     return result
 
 
+def _read_thresholds(seed_dir: Path) -> dict[str, Any]:
+    path = seed_dir / "thresholds.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"Thresholds históricos não encontrados: {path}")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not all(isinstance(value.get(key), dict) and "threshold" in value[key] for key in ("f1", "fpr10")):
+        raise ValueError(f"Thresholds históricos inválidos: {path}")
+    return value
+
+
 def _metric(scores: np.ndarray, labels: np.ndarray, threshold: float) -> dict[str, Any]:
     value = binary_metrics(labels, scores >= threshold, scores)
     value["Brier"] = float(brier_score_loss(labels, scores))
@@ -373,28 +404,79 @@ def evaluate_phase(config: ConfirmatoryConfig, *, resume: bool = False) -> dict[
     data_audit, split_signature = _validate_data(config); protocol_signature = _signature(config.protocol_payload(split_signature, data_audit["metadata"]["dataset_sha256"])); campaign_dir = _campaign_dir(config, protocol_signature)
     if not all(_seed_manifest_valid(campaign_dir / f"seed_{seed}") for seed in config.seeds):
         raise RuntimeError("A avaliação exige as três seeds treinadas e válidas.")
+    explicit_target_evaluation = config.evaluation_output_root is not None
+    evaluation_root = config.evaluation_output_root.resolve() if explicit_target_evaluation else campaign_dir
+    if config.zero_shot_config_path is None:
+        raise ValueError("zero_shot_config é obrigatório para evaluate.")
+    zero_base = load_zero_shot_config(config.zero_shot_config_path)
+    target_id = zero_base.publichearing_target_id or "publichearing_target"
     for seed in config.seeds:
-        seed_dir = campaign_dir / f"seed_{seed}"; _seed_state(seed_dir, "frozen", seed=seed)
-        thresholds = _thresholds(seed_dir)
-        ragtruth_metrics = _evaluate_ragtruth_test(config, seed_dir, seed, thresholds)
-        write_json(seed_dir / "ragtruth_test" / "thresholds_applied.json", thresholds)
-        if config.zero_shot_config_path is None:
-            raise ValueError("zero_shot_config é obrigatório para evaluate.")
-        zero_base = load_zero_shot_config(config.zero_shot_config_path)
+        seed_dir = campaign_dir / f"seed_{seed}"
+        evaluation_seed_dir = evaluation_root / f"seed_{seed}"
+        if explicit_target_evaluation:
+            evaluation_seed_dir.mkdir(parents=True, exist_ok=True)
+            thresholds = _read_thresholds(seed_dir)
+        else:
+            _seed_state(seed_dir, "frozen", seed=seed)
+            thresholds = _thresholds(seed_dir)
+        ragtruth_metrics = None if config.target_only else _evaluate_ragtruth_test(config, seed_dir, seed, thresholds)
+        if not explicit_target_evaluation:
+            write_json(seed_dir / "ragtruth_test" / "thresholds_applied.json", thresholds)
         run_manifest = json.loads((seed_dir / "run_manifest.json").read_text(encoding="utf-8")); checkpoint_rel = run_manifest["best_checkpoint"]
-        zero_cfg = replace(zero_base, ragtruth_run_dir=seed_dir, checkpoint_relative_path=checkpoint_rel, validation_predictions_relative_path=f"{checkpoint_rel}/validation_predictions.csv", expected_run_signature=run_manifest.get("config_fingerprint"), expected_source_run_name=run_manifest["config"]["run_name"], expected_best_epoch=int(run_manifest["best_epoch"]), expected_ragtruth_dataset_signature=config.expected_dataset_signature, expected_ragtruth_schema=config.expected_schema, expected_ragtruth_split_signature=config.expected_split_signature, output_root=seed_dir / "publichearing_zero_shot", run_name=f"confirmatory_seed_{seed}", seed=seed)
+        zero_cfg = replace(zero_base, ragtruth_run_dir=seed_dir, checkpoint_relative_path=checkpoint_rel, validation_predictions_relative_path=f"{checkpoint_rel}/validation_predictions.csv", expected_run_signature=run_manifest.get("config_fingerprint"), expected_source_run_name=run_manifest["config"]["run_name"], expected_best_epoch=int(run_manifest["best_epoch"]), expected_ragtruth_dataset_signature=config.expected_dataset_signature, expected_ragtruth_schema=config.expected_schema, expected_ragtruth_split_signature=config.expected_split_signature, output_root=evaluation_seed_dir / "publichearing_zero_shot", run_name=f"confirmatory_seed_{seed}", seed=seed)
         zero_manifest = run_zero_shot(zero_cfg, resume=resume)
-        zero_dir = seed_dir / "publichearing_zero_shot" / zero_manifest["signature"]
+        zero_dir = evaluation_seed_dir / "publichearing_zero_shot" / zero_manifest["signature"]
         write_json(zero_dir / "thresholds_applied.json", thresholds)
         zero_predictions = pd.read_parquet(zero_dir / "predictions.parquet")
         write_json(zero_dir / "bootstrap_grouped.json", _group_bootstrap(zero_predictions["label"].astype(bool).to_numpy(), zero_predictions["probability"].to_numpy(float), zero_predictions["hearing_id"].astype(str).to_numpy(), {"best_f1": thresholds["f1"]["threshold"], "fpr10": thresholds["fpr10"]["threshold"]}, config.bootstrap_repetitions, config.bootstrap_seed + seed))
-        _seed_state(seed_dir, "externally_evaluated", seed=seed, ragtruth_test=ragtruth_metrics, publichearing_signature=zero_manifest["signature"])
+        if explicit_target_evaluation:
+            write_json(evaluation_seed_dir / "thresholds_applied.json", thresholds)
+            target_provenance = zero_manifest.get("publichearing", {}).get("translation_manifest") or {}
+            _atomic_json(evaluation_seed_dir / "evaluation_manifest.json", {"status": "completed", "seed": seed, "source_campaign_dir": str(campaign_dir), "source_seed_dir": str(seed_dir), "training_dataset_signature": config.expected_dataset_signature, "checkpoint": checkpoint_rel, "checkpoint_hash": sha256_file(seed_dir / checkpoint_rel / "checkpoint_manifest.json"), "thresholds": thresholds, "threshold_provenance": "RAGTruth EN validation thresholds from historical seed artifact", "target_id": target_id, "target_manifest": target_provenance, "target_path": zero_manifest.get("publichearing", {}).get("path"), "target_sha256": zero_manifest.get("publichearing", {}).get("sha256"), "target_language": target_provenance.get("target_language"), "translation_backend": target_provenance.get("backend"), "source_target_sha256": target_provenance.get("source_sha256"), "zero_shot_signature": zero_manifest["signature"], "prediction_sha256": sha256_file(zero_dir / "predictions.parquet"), "metrics_sha256": sha256_file(zero_dir / "metrics.json")})
+            _seed_state(evaluation_seed_dir, "externally_evaluated", seed=seed, source_seed=seed, publichearing_signature=zero_manifest["signature"])
+        else:
+            _seed_state(seed_dir, "externally_evaluated", seed=seed, ragtruth_test=ragtruth_metrics, publichearing_signature=zero_manifest["signature"])
+    if explicit_target_evaluation:
+        _atomic_json(evaluation_root / "manifest.json", {"status": "externally_evaluated", "protocol_signature": protocol_signature, "source_campaign_dir": str(campaign_dir), "target_id": target_id, "target_only": config.target_only, "seeds": list(config.seeds), "data_audit": data_audit})
+        return {"status": "externally_evaluated", "protocol_signature": protocol_signature, "source_campaign_dir": str(campaign_dir), "evaluation_output_root": str(evaluation_root), "target_id": target_id}
     _atomic_json(campaign_dir / "manifest.json", {"status": "externally_evaluated", "signature": protocol_signature, "pooling_type": config.experiment.canonical_pooling_type, "seeds": list(config.seeds), "data_audit": data_audit})
     return {"status": "externally_evaluated", "protocol_signature": protocol_signature, "campaign_dir": str(campaign_dir)}
 
 
 def aggregate_phase(config: ConfirmatoryConfig) -> dict[str, Any]:
     data_audit, split_signature = _validate_data(config); protocol_signature = _signature(config.protocol_payload(split_signature, data_audit["metadata"]["dataset_sha256"])); campaign_dir = _campaign_dir(config, protocol_signature)
+    if config.evaluation_output_root is not None:
+        evaluation_root = config.evaluation_output_root.resolve()
+        root_manifest = evaluation_root / "manifest.json"
+        if not root_manifest.is_file():
+            raise RuntimeError("Avaliação target não encontrada para agregação.")
+        root = json.loads(root_manifest.read_text(encoding="utf-8")); target_id = str(root.get("target_id", "publichearing_target"))
+        if not all((evaluation_root / f"seed_{seed}" / "state.json").is_file() and json.loads((evaluation_root / f"seed_{seed}" / "state.json").read_text())["state"] == "externally_evaluated" for seed in config.seeds):
+            raise RuntimeError("A agregação target exige avaliações válidas para as três seeds.")
+        rows: list[dict[str, Any]] = []
+        bootstrap: dict[str, Any] = {}
+        for seed in config.seeds:
+            evaluation_seed = evaluation_root / f"seed_{seed}"
+            evaluation_manifest = json.loads((evaluation_seed / "evaluation_manifest.json").read_text(encoding="utf-8"))
+            zero_dir = evaluation_seed / "publichearing_zero_shot" / evaluation_manifest["zero_shot_signature"]
+            metrics = json.loads((zero_dir / "metrics.json").read_text(encoding="utf-8"))
+            source_seed = campaign_dir / f"seed_{seed}"; run = json.loads((source_seed / "run_manifest.json").read_text(encoding="utf-8")); checkpoint_hash = sha256_file(source_seed / run["best_checkpoint"] / "checkpoint_manifest.json")
+            public_metrics = {"threshold_free": metrics.get("threshold_free", {}), "best_f1": metrics.get("ragtruth_validation_best_f1_threshold", {}), "fpr10": metrics.get("ragtruth_validation_fpr10_threshold", {})}
+            for regime, value in public_metrics.items():
+                if value:
+                    rows.append({"dataset": target_id, "pooling_type": config.experiment.canonical_pooling_type, "seed": seed, "threshold_regime": regime, "best_epoch": run["best_epoch"], "validation_AUPRC": run.get("best_validation_AUPRC"), "threshold": value.get("threshold"), "checkpoint_hash": checkpoint_hash, "run_signature": run.get("config_fingerprint"), **{key: value.get(key) for key in ("AUPRC", "AUROC", "Brier", "Precision", "Recall", "F1", "MCC", "FPR", "Specificity", "BalancedAccuracy")}})
+            bootstrap[str(seed)] = {"publichearing_zero_shot": json.loads((zero_dir / "bootstrap_grouped.json").read_text(encoding="utf-8"))}
+        frame = pd.DataFrame(rows)
+        aggregate = frame.groupby(["dataset", "threshold_regime"], as_index=False).agg({column: ["mean", "std", "min", "max"] for column in ["AUPRC", "AUROC", "Brier", "Precision", "Recall", "F1", "MCC", "FPR", "Specificity", "BalancedAccuracy"] if column in frame}).reset_index(drop=True)
+        target = evaluation_root / "aggregate" / target_id; target.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(target / "per_seed_metrics.csv", index=False)
+        aggregate.to_csv(target / "aggregate_metrics.csv", index=False)
+        _atomic_json(target / "bootstrap_grouped.json", bootstrap)
+        _atomic_json(target / "comparison.json", {"interpretation": "descriptive_only", "source_campaign_dir": str(campaign_dir), "target_id": target_id, "target_only": config.target_only})
+        _atomic_json(target / "protocol_summary.json", {"protocol_signature": protocol_signature, "source_campaign_dir": str(campaign_dir), "target_id": target_id, "seeds": list(config.seeds), "target_only": config.target_only, "no_best_seed_selection": True})
+        artifact_hashes = {path.name: sha256_file(path) for path in target.iterdir() if path.is_file()}
+        _atomic_json(target / "manifest.json", {"status": "completed", "source_campaign_dir": str(campaign_dir), "target_id": target_id, "artifacts": artifact_hashes})
+        return {"status": "completed", "protocol_signature": protocol_signature, "source_campaign_dir": str(campaign_dir), "evaluation_output_root": str(evaluation_root), "aggregate_dir": str(target), "rows": len(frame)}
     if not all((campaign_dir / f"seed_{seed}" / "state.json").is_file() and json.loads((campaign_dir / f"seed_{seed}" / "state.json").read_text())["state"] == "externally_evaluated" for seed in config.seeds):
         raise RuntimeError("A agregação exige avaliações externas válidas para as três seeds.")
     rows: list[dict[str, Any]] = []

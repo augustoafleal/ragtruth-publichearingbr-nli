@@ -1,0 +1,68 @@
+run_name: ragtruth_lora_attention_mil_confirmatory
+output_root: ../runs/ragtruth_confirmatory
+model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+architecture: gated_attention
+encoder_mode: lora
+max_length: 512
+projection_size: 128
+attention_size: 64
+dropout: 0.30
+gradient_checkpointing: true
+dataset:
+  format: parquet
+  path: ../results/ragtruth_qa_training_view/deduplicate_source_claim_drop_conflicts_v1/0cdf598fa866741d/dataset.parquet
+  manifest_path: ../results/ragtruth_qa_training_view/deduplicate_source_claim_drop_conflicts_v1/0cdf598fa866741d/manifest.json
+  expected_signature: 0cdf598fa866741d
+  expected_schema: ragtruth-qa-training-view-deduplicated-v1
+  claim_column: claim
+  chunk_columns: [chunk_1, chunk_2, chunk_3, chunk_4]
+  evidence_mask_column: evidence_mask
+  label_column: label
+  group_column: source_id
+  split_column: split
+  validation_fraction: 0.15
+  split_seed: 42
+  evaluate_test: false
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.10
+  target_modules: [query_proj, value_proj]
+training:
+  train_batch_size: 1
+  eval_batch_size: 4
+  gradient_accumulation_steps: 16
+  head_learning_rate: 5.0e-4
+  encoder_learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.10
+  max_epochs: 6
+  planned_total_epochs: 6
+  early_stopping_patience: 2
+  max_grad_norm: 1.0
+  class_weight: {mode: auto_pos_weight}
+  task_balanced_sampler: true
+  num_workers: 0
+  save_epoch_checkpoints: true
+campaign:
+  seeds: [0, 1, 2]
+  split_seed: 42
+  max_epochs: 6
+  early_stopping_patience: 2
+  selection_metric: validation_AUPRC
+  selection_mode: max
+  bootstrap_repetitions: 2000
+  bootstrap_seed: 4242
+evaluation:
+  evaluate_test_during_training: false
+  evaluate_publichearing_during_training: false
+  target_only: true
+evaluation_output_root: ../runs/ragtruth_en_attention_to_publichearing_en_nllb
+expected_dataset_sha256: 357e05b08cdcc22b766dce432fd8ed5caa7703ddf144dc02da24ef63e7ff0a7c
+expected_dataset_signature: 0cdf598fa866741d
+expected_schema: ragtruth-qa-training-view-deduplicated-v1
+expected_split_signature: 525edec2966a4fac
+zero_shot_config: ../configs/ragtruth_en_to_publichearing_en_nllb_zero_shot.yaml
+reference_dir: ../results/publichearing_lora_attention_mil/741ed3152c2175e7
+protocol_name: ragtruth_confirmatory

@@ -1,0 +1,17 @@
+ragtruth_run_dir: ../runs/ragtruth_confirmatory/4e12933c51136624
+expected_source_run_name: ragtruth_lora_attention_mil_confirmatory_seed_0
+expected_model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+publichearing_path: ../data/processed/publichearing_nli_pt_to_en_nllb/PublicHearingBR_NLI.jsonl
+publichearing_translation_manifest: ../data/processed/publichearing_nli_pt_to_en_nllb/manifest.json
+publichearing_reference_path: ~/.cache/huggingface/hub/datasets--unicamp-dl--PublicHearingBR/snapshots/2f84a44bc34df483e25c987f0ff86caad0ab3433/PublicHearingBR_NLI.jsonl
+publichearing_reference_sha256: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
+publichearing_dataset_revision: 2f84a44bc34df483e25c987f0ff86caad0ab3433
+expected_publichearing_examples: 4235
+expected_publichearing_positives: 501
+expected_chunks: 4
+batch_size: 4
+dtype: float32
+device: auto
+output_root: ../runs/ragtruth_en_to_publichearing_en_nllb_zero_shot
+run_name: ragtruth_en_to_publichearingbr_en_nllb
+publichearing_target_id: publichearing_en_nllb
