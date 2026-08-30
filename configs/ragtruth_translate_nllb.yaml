@@ -10,11 +10,12 @@ translation:
   device: auto
 
 data:
-  input_dir: ../data/processed/ragtruth_textual
-  output_dir: ../data/processed/ragtruth_textual_pt_nllb
-  splits:
-    - train
-    - validation
-    - test
-  sample_fraction: 1.0
-  sample_seed: 42
+  input_path: ../results/ragtruth_qa_training_view/deduplicate_source_claim_drop_conflicts_v1/0cdf598fa866741d/dataset.parquet
+  manifest_path: ../results/ragtruth_qa_training_view/deduplicate_source_claim_drop_conflicts_v1/0cdf598fa866741d/manifest.json
+  output_dir: ../data/processed/ragtruth_confirmatory_pt_nllb
+  expected_source_sha256: 357e05b08cdcc22b766dce432fd8ed5caa7703ddf144dc02da24ef63e7ff0a7c
+  expected_source_signature: 0cdf598fa866741d
+  expected_source_schema: ragtruth-qa-training-view-deduplicated-v1
+  expected_source_rows: 34604
+  reference_split_assignments: ../runs/ragtruth_confirmatory/4e12933c51136624/seed_0/split_assignments.parquet
+  expected_split_signature: 525edec2966a4fac

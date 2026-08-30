@@ -2,13 +2,14 @@
 
 ## Purpose
 
-Create Portuguese variants of the processed RAGTruth JSONL dataset with the
-same translation pipeline used for both NLLB and MADLAD. This is a data
-preparation step, not a scientific experiment or a model-training campaign.
+Both NLLB and MADLAD create separate Portuguese Parquets from the canonical
+English post-RAG, post-deduplication training view. This is data preparation,
+not training.
 
-The pipeline translates only `claim` and evidence entries whose corresponding
-`evidence_mask` value is `true`. It preserves the schema, metadata, masks,
-splits, evidence slots, and record order.
+The NLLB pipeline translates only `claim` and chunks whose corresponding
+`evidence_mask` value is `true`. It preserves every other column, schema,
+metadata, masks, splits, evidence slots, and record order. It never falls back
+to the English source when a translation is missing.
 
 ## Requirements
 
@@ -23,16 +24,14 @@ needed for the unit tests.
 
 ## Smoke test
 
-Run the smoke configs before a larger cluster campaign. They use the real
-dataset but process at most three records from each split and write to separate
-directories:
+Validate the NLLB source and field contract without loading a model:
 
 ```bash
 python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_nllb_smoke.yaml
+  --config configs/ragtruth_translate_nllb_smoke.yaml --validate-only
 
 python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_madlad_smoke.yaml
+  --config configs/ragtruth_translate_madlad_smoke.yaml --validate-only
 ```
 
 The smoke output manifests use `mode: smoke` and
@@ -55,51 +54,21 @@ python scripts/translate_ragtruth.py \
   --config configs/ragtruth_translate_madlad.yaml
 ```
 
-MADLAD with a deterministic 25% sample of the dataset:
+MADLAD uses the same generation limits, beam count and batch sizes as the
+corresponding NLLB configs, while retaining its own model and language prefix.
 
-```bash
-python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_madlad_sample25.yaml
-```
+The normal configs process every canonical Parquet row. Their outputs are:
 
-This output is written separately to
-`data/processed/ragtruth_textual_pt_madlad_sample25/`.
-
-The MADLAD configs use `batch_size: 1` and `num_beams: 2` as a conservative
-GPU-memory setting for 16 GB GPUs. Full translation will therefore take longer
-but uses the same model and text-selection pipeline.
-
-The normal configs set `data.sample_fraction: 1.0` and
-`data.sample_seed: 42`, which processes every record in each configured split.
-The outputs are:
-
-- `data/processed/ragtruth_textual_pt_nllb/`
-- `data/processed/ragtruth_textual_pt_madlad/`
-
-## Deterministic sampling
-
-To translate a reproducible fraction without changing code, set for example:
-
-```yaml
-data:
-  sample_fraction: 0.25
-  sample_seed: 42
-```
-
-Sampling is performed independently for `train`, `validation`, and `test`.
-Selected records retain their original order. `sample_fraction` must be in
-`(0, 1]`; `1.0` means the full dataset.
-
-Smoke and sampling are mutually exclusive. Use `max_examples_per_split` only
-for smoke configs and `sample_fraction` for partial or full campaigns.
+- `data/processed/ragtruth_confirmatory_pt_nllb/dataset.parquet`
+- `data/processed/ragtruth_confirmatory_pt_madlad/dataset.parquet`
 
 ## Cache and resume
 
 Each output has a persistent SQLite translation cache. Completed text
 translations can be reused after an interruption. The cache is checked against
 the model, language, generation parameters, and input hashes. The output
-manifest additionally records the mode, fraction, seed, selection, and counts
-processed per split, so smoke, partial, and full outputs remain distinguishable.
+manifest additionally records backend settings, source/output hashes, cache
+usage, QA diagnostics and counts, so smoke and full outputs remain distinguishable.
 
 To resume explicitly with the same configuration, rerun the entrypoint with
 `--resume`:
@@ -111,6 +80,6 @@ python scripts/translate_ragtruth.py \
 ```
 
 The same `--resume` option works with the NLLB normal config, the MADLAD normal
-config, and either smoke config. A changed sampling fraction, seed, model, or
-input dataset is treated as a different execution and cannot reuse an
+config, and either smoke config. A changed backend, model, generation settings,
+or input dataset is treated as a different execution and cannot reuse an
 incompatible output manifest.

@@ -73,10 +73,11 @@ python scripts/build_ragtruth_training_view.py \
 
 ## Tradução do RAGTruth para português
 
-O pipeline de tradução lê os JSONL processados em
-`data/processed/ragtruth_textual` e mantém os mesmos splits, ordem e schema.
-Somente `claim` e as evidências com `evidence_mask: true` são traduzidos; os
-demais campos e slots mascarados são preservados.
+O NLLB oficial lê o Parquet canônico pós-RAG e pós-deduplicação. Somente
+`claim` e os chunks com `evidence_mask: true` são traduzidos. Todas as outras
+colunas, IDs, labels, masks, ordem, splits e metadados de retrieval são preservados.
+NLLB e MADLAD usam o mesmo Parquet canônico e produzem outputs Parquet
+separados, preservando a população experimental.
 
 NLLB:
 
@@ -92,24 +93,21 @@ python scripts/translate_ragtruth.py \
   --config configs/ragtruth_translate_madlad.yaml
 ```
 
-Antes de uma campanha no cluster, há smoke configs que processam no máximo
-3 registros por split:
+Antes de uma campanha no cluster, valide o smoke NLLB sem carregar pesos:
 
 ```bash
 python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_nllb_smoke.yaml
+  --config configs/ragtruth_translate_nllb_smoke.yaml --validate-only
 
 python scripts/translate_ragtruth.py \
-  --config configs/ragtruth_translate_madlad_smoke.yaml
+  --config configs/ragtruth_translate_madlad_smoke.yaml --validate-only
 ```
 
-As configs normais usam `sample_fraction: 1.0` (100%) e `sample_seed: 42`.
-Para uma amostra determinística, altere a fração para, por exemplo,
-`0.25` (25% de cada split). Smoke e sampling são opções distintas e não
-podem ser configurados juntos; cada smoke output usa um diretório separado.
+As configs normais processam todo o Parquet canônico. As smoke configs usam
+um output separado e podem ser validadas sem carregar pesos com `--validate-only`.
 
-Os outputs são, respectivamente, `data/processed/ragtruth_textual_pt_nllb`
-e `data/processed/ragtruth_textual_pt_madlad`. O device é escolhido por
+Os outputs são `data/processed/ragtruth_confirmatory_pt_nllb` e
+`data/processed/ragtruth_confirmatory_pt_madlad`. O device é escolhido por
 `device: auto` (CUDA quando disponível, caso contrário CPU); ele pode ser
 alterado para `cpu` ou `cuda` no YAML. Um cache SQLite persistente fica junto
 ao output e é reutilizado automaticamente após interrupções. Ele é validado
@@ -147,6 +145,47 @@ python scripts/run_ragtruth_confirmatory.py \
   --config configs/ragtruth_lora_attention_mil_confirmatory.yaml \
   --phase aggregate
 ```
+
+### RAGTruth PT NLLB
+
+Esta condição reutiliza a mesma arquitetura e protocolo confirmatório, mas usa
+o Parquet canônico traduzido em `data/processed/ragtruth_confirmatory_pt_nllb`.
+O wrapper não filtra dados. O `--dry-run` não carrega pesos nem treina:
+
+```bash
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml \
+  --dry-run
+
+# No cluster, depois da validação:
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
+```
+
+Após o treino, use o mesmo fluxo de seleção/evaluation/aggregation, trocando
+apenas a configuração pelo arquivo PT. O teste RAGTruth e o zero-shot
+PublicHearingBR só são executados na fase `evaluate`, depois da seleção por
+`validation_AUPRC`; nenhum deles é usado durante o treino. Para a avaliação
+externa, disponibilize o PublicHearingBR em `data/PublicHearingBR_NLI.jsonl`.
+
+### RAGTruth PT MADLAD
+
+Após a tradução completa com `configs/ragtruth_translate_madlad.yaml`, use a
+configuração confirmatória própria do MADLAD:
+
+```bash
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml \
+  --validate-only
+
+python scripts/run_ragtruth_confirmatory.py \
+  --config configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml \
+  --phase train
+```
+
+As fases `evaluate` e `aggregate` usam a mesma configuração MADLAD depois do
+treino. O MADLAD PT usa `longest_first` para lidar com claims traduzidos que
+excedem o limite de 512 tokens.
 
 ### Ablação de pooling
 

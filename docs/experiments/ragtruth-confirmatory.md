@@ -14,6 +14,44 @@ Build the RAGTruth training view before this experiment. See
 The confirmatory configuration records the expected Parquet dataset and grouped
 split. Verify both values in the resolved configuration before training.
 
+## Portuguese NLLB condition
+
+`configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml` keeps
+the same model, LoRA settings, seeds, optimizer, epochs, validation metric and
+evaluation protocol, while selecting the canonical translated Portuguese
+Parquet. It has the same 34,604 rows and source IDs as the English view; only
+the claim and valid evidence text are translated. Grouped assignments are
+compared with the English reference during translation.
+
+The compatibility wrapper only dispatches the confirmatory flow; it does not
+filter or rebuild data:
+
+```bash
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml \
+  --dry-run
+
+python scripts/run_ragtruth_pt_nllb_experiment.py \
+  --config configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml
+```
+
+The validation-only command does not download model weights, initialize CUDA,
+or start training. During training, RAGTruth validation is used to select
+checkpoints and thresholds. RAGTruth test and PublicHearingBR zero-shot
+evaluation run only afterward. The PT zero-shot configuration expects the
+dataset at `data/PublicHearingBR_NLI.jsonl`. Make sure it is available before
+the evaluation phase.
+
+## Portuguese MADLAD condition
+
+The MADLAD condition uses the same confirmatory architecture, optimizer,
+seeds, epoch budget and selection protocol as NLLB. Its translated Parquet is
+`data/processed/ragtruth_confirmatory_pt_madlad/dataset.parquet`, and its
+configuration is `configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml`.
+The condition uses `longest_first` token truncation because translated claims
+can exceed the 512-token model limit. The dedicated PublicHearingBR
+configuration is `configs/ragtruth_pt_madlad_to_publichearing_zero_shot.yaml`.
+
 ## Run
 
 Script: `scripts/run_ragtruth_confirmatory.py`

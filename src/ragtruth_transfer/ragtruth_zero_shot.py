@@ -9,7 +9,7 @@ import platform
 import shutil
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -37,14 +37,18 @@ class ZeroShotConfig:
     validation_predictions_relative_path: str = "checkpoints/epoch_03/validation_predictions.csv"
     expected_run_signature: str | None = None
     expected_source_run_name: str = "ragtruth_lora_attention_mil_parquet"
-    expected_ragtruth_dataset_signature: str = "0cdf598fa866741d"
+    expected_ragtruth_dataset_signature: str | None = "0cdf598fa866741d"
     expected_ragtruth_schema: str = "ragtruth-qa-training-view-deduplicated-v1"
-    expected_ragtruth_split_signature: str = "525edec2966a4fac"
+    expected_ragtruth_split_signature: str | None = "525edec2966a4fac"
     expected_best_epoch: int = 3
     expected_model_revision: str = "b5113eb38ab63efdd7f280f8c144ea8b13f978ce"
     publichearing_path: Path = Path("data/PublicHearingBR_NLI.jsonl")
     publichearing_dataset_sha256: str | None = None
     publichearing_dataset_revision: str | None = "2f84a44bc34df483e25c987f0ff86caad0ab3433"
+    publichearing_translation_manifest: Path | None = None
+    publichearing_reference_path: Path | None = None
+    publichearing_reference_sha256: str | None = None
+    publichearing_target_id: str | None = None
     expected_publichearing_examples: int = 4235
     expected_publichearing_positives: int | None = 501
     batch_size: int = 4
@@ -70,14 +74,22 @@ class ZeroShotConfig:
             validation_predictions_relative_path=str(raw.get("validation_predictions_relative_path", cls.validation_predictions_relative_path)),
             expected_run_signature=(str(raw["expected_run_signature"]) if raw.get("expected_run_signature") else None),
             expected_source_run_name=str(raw.get("expected_source_run_name", cls.expected_source_run_name)),
-            expected_ragtruth_dataset_signature=str(raw.get("expected_ragtruth_dataset_signature", cls.expected_ragtruth_dataset_signature)),
+            expected_ragtruth_dataset_signature=(
+                str(raw["expected_ragtruth_dataset_signature"])
+                if raw.get("expected_ragtruth_dataset_signature")
+                else (None if "expected_ragtruth_dataset_signature" in raw else cls.expected_ragtruth_dataset_signature)
+            ),
             expected_ragtruth_schema=str(raw.get("expected_ragtruth_schema", cls.expected_ragtruth_schema)),
-            expected_ragtruth_split_signature=str(raw.get("expected_ragtruth_split_signature", cls.expected_ragtruth_split_signature)),
+            expected_ragtruth_split_signature=(str(raw["expected_ragtruth_split_signature"]) if raw.get("expected_ragtruth_split_signature") else (None if "expected_ragtruth_split_signature" in raw else cls.expected_ragtruth_split_signature)),
             expected_best_epoch=int(raw.get("expected_best_epoch", cls.expected_best_epoch)),
             expected_model_revision=str(raw.get("expected_model_revision", cls.expected_model_revision)),
             publichearing_path=resolve(raw.get("publichearing_path"), base_dir / "../data/PublicHearingBR_NLI.jsonl"),  # type: ignore[arg-type]
             publichearing_dataset_sha256=(str(raw["publichearing_dataset_sha256"]) if raw.get("publichearing_dataset_sha256") else None),
             publichearing_dataset_revision=(str(raw["publichearing_dataset_revision"]) if raw.get("publichearing_dataset_revision") else None),
+            publichearing_translation_manifest=resolve(raw.get("publichearing_translation_manifest")),  # type: ignore[arg-type]
+            publichearing_reference_path=resolve(raw.get("publichearing_reference_path")),  # type: ignore[arg-type]
+            publichearing_reference_sha256=(str(raw["publichearing_reference_sha256"]) if raw.get("publichearing_reference_sha256") else None),
+            publichearing_target_id=(str(raw["publichearing_target_id"]) if raw.get("publichearing_target_id") else None),
             expected_publichearing_examples=int(raw.get("expected_publichearing_examples", cls.expected_publichearing_examples)),
             expected_publichearing_positives=(int(raw["expected_publichearing_positives"]) if raw.get("expected_publichearing_positives") is not None else None),
             batch_size=int(raw.get("batch_size", cls.batch_size)),
@@ -92,7 +104,7 @@ class ZeroShotConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = dict(self.__dict__)
-        for key in ("ragtruth_run_dir", "publichearing_path", "output_root", "indomain_reference_dir"):
+        for key in ("ragtruth_run_dir", "publichearing_path", "output_root", "indomain_reference_dir", "publichearing_translation_manifest", "publichearing_reference_path"):
             value[key] = str(value[key]) if value[key] is not None else None
         return value
 
@@ -151,7 +163,7 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
     if int(run_manifest.get("best_epoch", -1)) != config.expected_best_epoch:
         raise ValueError("best_epoch do run não corresponde ao checkpoint esperado.")
     dataset_metadata = run_manifest.get("dataset", {})
-    if dataset_metadata.get("signature") != config.expected_ragtruth_dataset_signature:
+    if config.expected_ragtruth_dataset_signature and dataset_metadata.get("signature") != config.expected_ragtruth_dataset_signature:
         raise ValueError("Assinatura da visão RAGTruth incompatível.")
     if dataset_metadata.get("schema_version") != config.expected_ragtruth_schema:
         raise ValueError("Schema da visão RAGTruth incompatível.")
@@ -159,13 +171,17 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
     checkpoint_split_hashes = {}
     if isinstance(split_hashes, dict):
         checkpoint_split_hashes = split_hashes
-    if checkpoint_split_hashes.get("split") != config.expected_ragtruth_split_signature:
+    if config.expected_ragtruth_split_signature and checkpoint_split_hashes.get("split") != config.expected_ragtruth_split_signature:
         raise ValueError("Assinatura da divisão RAGTruth incompatível.")
     parent_manifest_path = dataset_metadata.get("manifest_path")
     if parent_manifest_path:
         parent_manifest_file = Path(str(parent_manifest_path))
         if not parent_manifest_file.is_file():
-            raise ValueError(f"Manifesto parent RAGTruth não encontrado: {parent_manifest_file}")
+            local_candidate = Path(__file__).resolve().parents[2] / "results" / "ragtruth_qa_training_view" / "deduplicate_source_claim_drop_conflicts_v1" / str(dataset_metadata.get("signature")) / "manifest.json"
+            if local_candidate.is_file() and (not checkpoint_split_hashes.get("manifest") or sha256_file(local_candidate) == str(checkpoint_split_hashes["manifest"])):
+                parent_manifest_file = local_candidate
+            else:
+                raise ValueError(f"Manifesto parent RAGTruth não encontrado: {parent_manifest_file}")
         expected_parent_hash = checkpoint_split_hashes.get("manifest")
         if expected_parent_hash and sha256_file(parent_manifest_file) != str(expected_parent_hash):
             raise ValueError("SHA do manifesto parent RAGTruth não coincide com o run.")
@@ -186,7 +202,7 @@ def validate_frozen_source(config: ZeroShotConfig) -> tuple[Path, dict[str, Any]
     if str(checkpoint_manifest.get("model_revision")) != config.expected_model_revision:
         raise ValueError("Revisão do mDeBERTa incompatível.")
     checkpoint_data_hashes = checkpoint_manifest.get("data_split_sha256", {})
-    if isinstance(checkpoint_data_hashes, dict) and checkpoint_data_hashes.get("split") != config.expected_ragtruth_split_signature:
+    if config.expected_ragtruth_split_signature and isinstance(checkpoint_data_hashes, dict) and checkpoint_data_hashes.get("split") != config.expected_ragtruth_split_signature:
         raise ValueError("Checkpoint não pertence à divisão RAGTruth esperada.")
     if str(run_config_raw.get("model_revision")) != config.expected_model_revision:
         raise ValueError("Revisão do modelo no run não está fixada conforme configuração.")
@@ -326,9 +342,60 @@ def _load_publichearing_labels(path: Path, expected_ids: list[str], expected_pos
     return result
 
 
+def validate_publichearing_target(config: ZeroShotConfig) -> dict[str, Any]:
+    rows = load_publichearing_inputs(config)
+    ids = [str(row["example_id"]) for row in rows]
+    labels = _load_publichearing_labels(config.publichearing_path, ids, config.expected_publichearing_positives)
+    audit: dict[str, Any] = {
+        "target_id": config.publichearing_target_id,
+        "path": str(config.publichearing_path.resolve()),
+        "sha256": sha256_file(config.publichearing_path),
+        "examples": len(rows),
+        "positives": int(labels.sum()),
+        "hearing_ids": len({str(row["hearing_id"]) for row in rows}),
+    }
+    if config.publichearing_translation_manifest is not None:
+        manifest = _load_json(config.publichearing_translation_manifest)
+        if manifest.get("status") != "completed":
+            raise ValueError("Manifesto da tradução PublicHearingBR não está completed")
+        output = manifest.get("output")
+        if not isinstance(output, dict) or str(output.get("path")) != str(config.publichearing_path.resolve()):
+            raise ValueError("Manifesto da tradução não aponta para o target configurado")
+        if str(output.get("sha256")) != audit["sha256"]:
+            raise ValueError("SHA do target traduzido diverge do manifesto")
+        alignment = manifest.get("alignment_audit", {})
+        if alignment.get("status") != "passed":
+            raise ValueError("Manifesto da tradução sem auditoria de alinhamento aprovada")
+        audit["translation_manifest"] = {
+            "path": str(config.publichearing_translation_manifest.resolve()),
+            "sha256": sha256_file(config.publichearing_translation_manifest),
+            "signature": manifest.get("signature"),
+            "source_sha256": manifest.get("source", {}).get("sha256"),
+            "source_revision": manifest.get("source_revision"),
+            "backend": manifest.get("backend"),
+            "source_language": manifest.get("source_language"),
+            "target_language": manifest.get("target_language"),
+        }
+    if config.publichearing_reference_path is not None:
+        reference = replace(
+            config,
+            publichearing_path=config.publichearing_reference_path,
+            publichearing_dataset_sha256=config.publichearing_reference_sha256,
+            publichearing_translation_manifest=None,
+            publichearing_reference_path=None,
+        )
+        reference_rows = load_publichearing_inputs(reference)
+        reference_ids = [str(row["example_id"]) for row in reference_rows]
+        reference_labels = _load_publichearing_labels(reference.publichearing_path, reference_ids, reference.expected_publichearing_positives)
+        if ids != reference_ids or not np.array_equal(labels, reference_labels) or [str(row["hearing_id"]) for row in rows] != [str(row["hearing_id"]) for row in reference_rows]:
+            raise ValueError("Target traduzido não está alinhado ao PublicHearingBR PT de referência")
+        audit["reference_alignment"] = {"status": "passed", "path": str(config.publichearing_reference_path.resolve()), "sha256": sha256_file(config.publichearing_reference_path), "examples": len(reference_rows), "positives": int(reference_labels.sum())}
+    return audit
+
+
 @torch.inference_mode()
-def _infer(model: torch.nn.Module, tokenizer: Any, rows: list[dict[str, Any]], batch_size: int, max_length: int, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
-    loader = DataLoader(rows, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=BagCollator(tokenizer, max_length), pin_memory=device.type == "cuda")
+def _infer(model: torch.nn.Module, tokenizer: Any, rows: list[dict[str, Any]], batch_size: int, max_length: int, truncation: str, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
+    loader = DataLoader(rows, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=BagCollator(tokenizer, max_length, truncation), pin_memory=device.type == "cuda")
     probabilities: list[np.ndarray] = []
     pooling_weights: list[np.ndarray] = []
     model.eval()
@@ -379,6 +446,7 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
     checkpoint, run_manifest, checkpoint_manifest, model_config = validate_frozen_source(config)
     thresholds = _thresholds_from_validation(config, checkpoint, run_manifest)
     rows = load_publichearing_inputs(config)
+    target_audit = validate_publichearing_target(config)
     checkpoint_hash = _json_hash(_file_hashes(checkpoint))
     dataset_hash = sha256_file(config.publichearing_path)
     signature_payload = {
@@ -386,6 +454,9 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
         "checkpoint_hash": checkpoint_hash, "checkpoint_epoch": checkpoint_manifest["epoch"], "model": model_config.to_dict(),
         "pooling_type": model_config.canonical_pooling_type, "thresholds": thresholds, "publichearing_sha256": dataset_hash, "preprocessing": "existing_publichearing_chunks_proximos_exactly_four", "batch_size": config.batch_size, "dtype": config.dtype,
     }
+    if config.publichearing_target_id or config.publichearing_translation_manifest:
+        signature_payload["publichearing_target_id"] = config.publichearing_target_id
+        signature_payload["publichearing_translation_manifest"] = target_audit.get("translation_manifest")
     signature = _json_hash(signature_payload)[:16]
     output_dir = (config.output_root / signature).resolve()
     if output_dir.exists():
@@ -396,7 +467,7 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
                 return existing
         raise FileExistsError(f"Output já existe ou é parcial: {output_dir}")
     if validate_only:
-        return {"status": "valid", "signature": signature, "pooling_type": model_config.canonical_pooling_type, "model_loaded": False, "cuda_initialized": False, "inference_executed": False, "backward_executed": False, "checkpoint": str(checkpoint), "checkpoint_epoch": checkpoint_manifest["epoch"], "thresholds": thresholds, "publichearing_examples": len(rows), "publichearing_sha256": dataset_hash}
+        return {"status": "valid", "signature": signature, "pooling_type": model_config.canonical_pooling_type, "model_loaded": False, "cuda_initialized": False, "inference_executed": False, "backward_executed": False, "checkpoint": str(checkpoint), "checkpoint_epoch": checkpoint_manifest["epoch"], "thresholds": thresholds, "publichearing_examples": len(rows), "publichearing_sha256": dataset_hash, "publichearing_target_audit": target_audit}
     device = torch.device("cuda" if config.device == "auto" and torch.cuda.is_available() else ("cpu" if config.device == "auto" else config.device))
     if config.dtype not in {"float32", "float16"}:
         raise ValueError("dtype deve ser float32 ou float16")
@@ -411,7 +482,7 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
         parameter.requires_grad_(False)
     model.to(device).eval()
     before = _json_hash({key: value.detach().cpu().numpy().tobytes().hex() for key, value in model.state_dict().items()})
-    scores, pooling_weights = _infer(model, tokenizer, rows, config.batch_size, model_config.max_length, device)
+    scores, pooling_weights = _infer(model, tokenizer, rows, config.batch_size, model_config.max_length, model_config.truncation, device)
     after = _json_hash({key: value.detach().cpu().numpy().tobytes().hex() for key, value in model.state_dict().items()})
     if before != after:
         raise RuntimeError("Pesos do modelo mudaram durante inferência.")
@@ -433,7 +504,7 @@ def run_zero_shot(config: ZeroShotConfig, *, validate_only: bool = False, resume
         run_log = {"event": "completed", "seconds": time.time() - started, "device": str(device), "gpu": torch.cuda.get_device_name(0) if device.type == "cuda" else None}
         (stage / "run_log.jsonl").write_text(json.dumps(run_log, ensure_ascii=False) + "\n", encoding="utf-8")
         artifact_hashes = _file_hashes(stage)
-        manifest = {"schema_version": ZERO_SHOT_SCHEMA, "status": "completed", "diagnostic_classification": "preliminary exploratory zero-shot diagnostic", "signature": signature, "pooling_type": model_config.canonical_pooling_type, "signature_payload": signature_payload, "source_run": {"run_dir": str(config.ragtruth_run_dir.resolve()), "run_manifest_sha256": sha256_file(config.ragtruth_run_dir / "run_manifest.json"), "signature": str(run_manifest.get("signature") or run_manifest.get("config_fingerprint")), "best_epoch": checkpoint_manifest["epoch"], "checkpoint": str(checkpoint), "checkpoint_manifest_sha256": sha256_file(checkpoint / "checkpoint_manifest.json")}, "publichearing": {"path": str(config.publichearing_path.resolve()), "sha256": dataset_hash, "dataset_revision": config.publichearing_dataset_revision, "examples": len(labels), "positives": int(labels.sum())}, "threshold_origin": "RAGTruth validation only", "model": model_metadata, "artifacts": artifact_hashes}
+        manifest = {"schema_version": ZERO_SHOT_SCHEMA, "status": "completed", "diagnostic_classification": "preliminary exploratory zero-shot diagnostic", "signature": signature, "pooling_type": model_config.canonical_pooling_type, "signature_payload": signature_payload, "source_run": {"run_dir": str(config.ragtruth_run_dir.resolve()), "run_manifest_sha256": sha256_file(config.ragtruth_run_dir / "run_manifest.json"), "signature": str(run_manifest.get("signature") or run_manifest.get("config_fingerprint")), "best_epoch": checkpoint_manifest["epoch"], "checkpoint": str(checkpoint), "checkpoint_manifest_sha256": sha256_file(checkpoint / "checkpoint_manifest.json")}, "publichearing": {"path": str(config.publichearing_path.resolve()), "sha256": dataset_hash, "dataset_revision": config.publichearing_dataset_revision, "target_id": config.publichearing_target_id, "translation_manifest": target_audit.get("translation_manifest"), "examples": len(labels), "positives": int(labels.sum())}, "threshold_origin": "RAGTruth validation only", "model": model_metadata, "artifacts": artifact_hashes}
         write_json(stage / "manifest.json", manifest)
         os.replace(stage, output_dir)
         return manifest

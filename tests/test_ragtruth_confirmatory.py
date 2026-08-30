@@ -15,6 +15,17 @@ def test_confirmatory_protocol_declares_three_fixed_seeds() -> None:
     assert config.expected_split_signature == "525edec2966a4fac"
 
 
+def test_madlad_confirmatory_config_declares_pending_translated_dataset_contract() -> None:
+    config = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_pt_madlad_lora_attention_mil_confirmatory.yaml"))
+    assert config.experiment.dataset.path is not None
+    assert config.experiment.dataset.path.name == "dataset.parquet"
+    assert config.experiment.dataset.expected_signature is None
+    assert config.expected_dataset_signature is None
+    assert config.experiment.truncation == "longest_first"
+    assert config.zero_shot_config_path is not None
+    assert config.zero_shot_config_path.name == "ragtruth_pt_madlad_to_publichearing_zero_shot.yaml"
+
+
 @pytest.mark.integration
 def test_confirmatory_protocol_validates_frozen_training_view_when_available() -> None:
     config = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_lora_attention_mil_confirmatory.yaml"))
@@ -38,3 +49,20 @@ def test_confirmatory_signature_changes_with_protocol_seed() -> None:
     changed = dict(payload)
     changed["bootstrap_seed"] = 99
     assert _signature(changed) != first
+
+
+def test_madlad_target_evaluation_configs_are_target_aware() -> None:
+    attention = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_en_attention_to_publichearing_en_madlad.yaml"))
+    set_transformer = ConfirmatoryConfig.from_yaml(Path("configs/ragtruth_en_set_to_publichearing_en_madlad.yaml"))
+    assert attention.evaluation_output_root is not None
+    assert set_transformer.evaluation_output_root is not None
+    assert attention.evaluation_output_root != set_transformer.evaluation_output_root
+    assert attention.zero_shot_config_path is not None
+    assert set_transformer.zero_shot_config_path is not None
+    from ragtruth_transfer.ragtruth_zero_shot import load_zero_shot_config
+    attention_target = load_zero_shot_config(attention.zero_shot_config_path)
+    set_target = load_zero_shot_config(set_transformer.zero_shot_config_path)
+    assert attention_target.publichearing_target_id == "publichearing_en_madlad"
+    assert set_target.publichearing_target_id == "publichearing_en_madlad"
+    assert attention_target.publichearing_path.name == "PublicHearingBR_NLI.jsonl"
+    assert "publichearing_nli_pt_to_en_madlad" in str(attention_target.publichearing_path)

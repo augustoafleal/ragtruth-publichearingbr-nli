@@ -112,7 +112,7 @@ def test_infer_does_not_change_model_and_has_normalized_attention() -> None:
     rows = [{"example_id": "1:0:0", "source_id": "1", "claim": "c", "evidence": ["a", "b", "c", "d"], "evidence_mask": [True] * 4, "label": 0, "task_type": "PublicHearingBR"}]
     model = DummyModel()
     before = {key: value.detach().clone() for key, value in model.state_dict().items()}
-    scores, attention = _infer(model, DummyTokenizer(), rows, 1, 8, torch.device("cpu"))
+    scores, attention = _infer(model, DummyTokenizer(), rows, 1, 8, "only_first", torch.device("cpu"))
     assert scores.tolist() == [0.5]
     assert attention.tolist() == [[0.25, 0.25, 0.25, 0.25]]
     assert not model.training

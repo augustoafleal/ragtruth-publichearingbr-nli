@@ -27,6 +27,189 @@ EXPECTED_SEEDS = (0, 1, 2)
 METRICS = ("auprc", "auroc", "brier_improvement")
 
 
+def validate_generic_paired_frames(
+    frames: dict[str, dict[int, pd.DataFrame]],
+    *,
+    conditions: tuple[str, ...] | None = None,
+    seeds: tuple[int, ...] = EXPECTED_SEEDS,
+    expected_rows: int = EXPECTED_ROWS,
+    expected_positives: int = EXPECTED_POSITIVES,
+    expected_hearings: int = EXPECTED_HEARINGS,
+    score_column: str = "probability",
+) -> dict[str, Any]:
+    names = tuple(conditions or frames)
+    if not names or set(frames) != set(names):
+        raise ValueError(f"Condições incompatíveis: esperado {names}, recebido {tuple(frames)}")
+    reference: pd.DataFrame | None = None
+    audit: dict[str, Any] = {}
+    for condition in names:
+        if set(frames[condition]) != set(seeds):
+            raise ValueError(f"Seeds incompatíveis em {condition}")
+        audit[condition] = {}
+        for paired_seed in seeds:
+            frame = frames[condition][paired_seed]
+            required = {"example_id", "hearing_id", "label", score_column}
+            if not required.issubset(frame.columns):
+                raise ValueError(f"Colunas ausentes em {condition}/seed_{paired_seed}")
+            current = frame[["example_id", "hearing_id", "label", score_column]].copy()
+            current["example_id"] = current["example_id"].astype(str)
+            current["hearing_id"] = current["hearing_id"].astype(str)
+            if len(current) != expected_rows or not current.example_id.is_unique:
+                raise ValueError(f"População/IDs inválidos em {condition}/seed_{paired_seed}")
+            if current.hearing_id.nunique() != expected_hearings or current.isna().any().any():
+                raise ValueError(f"Hearings/nulos inválidos em {condition}/seed_{paired_seed}")
+            if not set(current.label.unique()).issubset({0, 1}) or set(current.label.unique()) != {0, 1} or int(current.label.sum()) != expected_positives:
+                raise ValueError(f"Labels inválidos em {condition}/seed_{paired_seed}")
+            scores = current[score_column].to_numpy(float)
+            if not np.isfinite(scores).all() or not ((scores >= 0).all() and (scores <= 1).all()):
+                raise ValueError(f"Scores inválidos em {condition}/seed_{paired_seed}")
+            indexed = current.set_index("example_id").sort_index()
+            if reference is None:
+                reference = indexed[["hearing_id", "label"]]
+            else:
+                if not reference.index.equals(indexed.index):
+                    raise ValueError(f"example_id mismatch em {condition}/seed_{paired_seed}")
+                if not reference["hearing_id"].equals(indexed["hearing_id"]):
+                    raise ValueError(f"hearing_id mismatch em {condition}/seed_{paired_seed}")
+                if not reference["label"].astype(int).equals(indexed["label"].astype(int)):
+                    raise ValueError(f"label mismatch em {condition}/seed_{paired_seed}")
+            audit[condition][str(paired_seed)] = {"examples": len(current), "hearings": int(current.hearing_id.nunique()), "positives": int(current.label.sum())}
+    assert reference is not None
+    return {"examples": expected_rows, "positives": expected_positives, "hearings": expected_hearings,
+            "prevalence": expected_positives / expected_rows, "exact_example_alignment": True,
+            "exact_hearing_alignment": True, "exact_label_alignment": True, "probabilities_valid": True,
+            "per_condition": audit}
+
+
+def _generic_summary(values: np.ndarray, confidence_level: float, favorable_positive: bool = True) -> dict[str, Any]:
+    if len(values) == 0:
+        return {"mean": None, "median": None, "ci_lower": None, "ci_upper": None, "p_delta_gt_zero": None,
+                "p_delta_lt_zero": None, "probability_favorable": None, "favorable_direction": "higher" if favorable_positive else "lower", "n_valid": 0}
+    alpha = 1.0 - confidence_level
+    return {"mean": float(values.mean()), "median": float(np.median(values)),
+            "ci_lower": float(np.quantile(values, alpha / 2)), "ci_upper": float(np.quantile(values, 1 - alpha / 2)),
+            "p_delta_gt_zero": float(np.mean(values > 0)), "p_delta_lt_zero": float(np.mean(values < 0)),
+            "probability_favorable": float(np.mean(values > 0 if favorable_positive else values < 0)),
+            "favorable_direction": "higher" if favorable_positive else "lower", "n_valid": int(len(values))}
+
+
+def _fast_metric_values(labels: np.ndarray, scores: np.ndarray) -> dict[str, float]:
+    labels = np.asarray(labels, dtype=np.int8)
+    scores = np.asarray(scores, dtype=float)
+    order = np.argsort(-scores, kind="mergesort")
+    sorted_scores = scores[order]
+    sorted_labels = labels[order]
+    starts = np.r_[0, np.flatnonzero(sorted_scores[1:] != sorted_scores[:-1]) + 1]
+    ends = np.r_[starts[1:], len(sorted_scores)]
+    positives_by_score = np.add.reduceat(sorted_labels, starts)
+    rows_by_score = ends - starts
+    cumulative_positives = np.cumsum(positives_by_score)
+    cumulative_rows = np.cumsum(rows_by_score)
+    total_positive = int(labels.sum())
+    total_negative = int(len(labels) - total_positive)
+    average_precision = float(np.sum((cumulative_positives / cumulative_rows) * positives_by_score) / total_positive)
+    average_ranks = (starts + 1 + ends) / 2.0
+    u_statistic = float(np.sum(average_ranks * positives_by_score) - total_positive * (total_positive + 1) / 2)
+    return {"auprc": average_precision, "auroc": 1.0 - u_statistic / (total_positive * total_negative),
+            "brier": float(np.mean((scores - labels) ** 2))}
+
+
+def run_generic_pairwise_bootstrap(
+    frames: dict[str, dict[int, pd.DataFrame]],
+    contrasts: dict[str, tuple[str, str]],
+    *,
+    interactions: dict[str, tuple[str, str]] | None = None,
+    seeds: tuple[int, ...] = EXPECTED_SEEDS,
+    n_replicates: int = 10000,
+    seed: int = 20260815,
+    confidence_level: float = 0.95,
+    metrics: tuple[str, ...] = ("auprc", "auroc", "brier"),
+    expected_rows: int = EXPECTED_ROWS,
+    expected_positives: int = EXPECTED_POSITIVES,
+    expected_hearings: int = EXPECTED_HEARINGS,
+    score_column: str = "probability",
+) -> dict[str, Any]:
+    allowed_metrics = {"auprc", "auroc", "brier"}
+    if not metrics or not set(metrics).issubset(allowed_metrics) or n_replicates < 1:
+        raise ValueError("Métricas ou número de réplicas inválido")
+    interactions = interactions or {}
+    for name, (left, right) in contrasts.items():
+        if left not in frames or right not in frames or left == right:
+            raise ValueError(f"Contraste inválido {name}: {left}, {right}")
+    for name, (first, second) in interactions.items():
+        if first not in contrasts or second not in contrasts:
+            raise ValueError(f"Interaction inválida {name}")
+    population = validate_generic_paired_frames(frames, conditions=tuple(frames), seeds=seeds,
+                                                 expected_rows=expected_rows, expected_positives=expected_positives,
+                                                 expected_hearings=expected_hearings, score_column=score_column)
+    names = tuple(frames)
+    reference = frames[names[0]][seeds[0]][["example_id", "hearing_id", "label"]].copy()
+    reference["example_id"] = reference.example_id.astype(str)
+    reference = reference.set_index("example_id").sort_index()
+    labels = reference.label.to_numpy(int)
+    group_values = reference.hearing_id.astype(str).to_numpy()
+    groups = sorted(np.unique(group_values).tolist())
+    group_indices = [np.flatnonzero(group_values == group) for group in groups]
+    scores: dict[str, dict[int, np.ndarray]] = {}
+    observed: dict[str, dict[str, dict[str, float]]] = {}
+    for condition in names:
+        scores[condition] = {}
+        observed[condition] = {}
+        for paired_seed in seeds:
+            current = frames[condition][paired_seed].copy()
+            current["example_id"] = current.example_id.astype(str)
+            indexed = current.set_index("example_id").sort_index()
+            values = indexed.loc[reference.index, score_column].to_numpy(float)
+            scores[condition][paired_seed] = values
+            observed[condition][str(paired_seed)] = {metric: _metric_value(metric, labels, values) for metric in metrics}
+    observed_campaign = {name: {metric: float(np.mean([observed[right][str(s)][metric] - observed[left][str(s)][metric] for s in seeds]))
+                                for metric in metrics} for name, (left, right) in contrasts.items()}
+    observed_campaign.update({name: {metric: observed_campaign[first][metric] - observed_campaign[second][metric] for metric in metrics}
+                              for name, (first, second) in interactions.items()})
+    rng = np.random.default_rng(seed)
+    rows: list[dict[str, Any]] = []
+    all_contrasts = tuple(contrasts) + tuple(interactions)
+    for replicate_id in range(n_replicates):
+        sampled_positions = rng.integers(0, len(groups), size=len(groups))
+        indices = np.concatenate([group_indices[position] for position in sampled_positions])
+        sampled_labels = labels[indices]
+        valid = np.unique(sampled_labels).size == 2
+        reason = None if valid else "single_class_resample"
+        replicate_values: dict[str, dict[str, float]] = {condition: {} for condition in names}
+        if valid:
+            for condition in names:
+                seed_metrics = [_fast_metric_values(sampled_labels, scores[condition][s][indices]) for s in seeds]
+                for metric in metrics:
+                    replicate_values[condition][metric] = float(np.mean([item[metric] for item in seed_metrics]))
+        for contrast in all_contrasts:
+            for metric in metrics:
+                if contrast in contrasts:
+                    left, right = contrasts[contrast]
+                    delta = replicate_values[right][metric] - replicate_values[left][metric] if valid else np.nan
+                else:
+                    first, second = interactions[contrast]
+                    delta = ((replicate_values[contrasts[first][1]][metric] - replicate_values[contrasts[first][0]][metric]) -
+                             (replicate_values[contrasts[second][1]][metric] - replicate_values[contrasts[second][0]][metric])) if valid else np.nan
+                rows.append({"replicate_id": replicate_id, "contrast": contrast, "metric": metric, "delta": delta,
+                             "valid": valid, "invalid_reason": reason, "n_rows": len(indices),
+                             "n_sampled_groups": len(groups), "n_unique_groups": len(np.unique(sampled_positions)),
+                             "n_positive": int(sampled_labels.sum()), "n_negative": int((sampled_labels == 0).sum())})
+    replicate_frame = pd.DataFrame(rows)
+    summaries: dict[str, dict[str, Any]] = {}
+    for contrast in all_contrasts:
+        summaries[contrast] = {}
+        for metric in metrics:
+            values = replicate_frame.loc[(replicate_frame.contrast == contrast) & (replicate_frame.metric == metric) & replicate_frame.valid, "delta"].to_numpy(float)
+            favorable_positive = metric != "brier"
+            summaries[contrast][metric] = _generic_summary(values, confidence_level, favorable_positive)
+    return {"population": population, "observed": observed, "observed_campaign": observed_campaign, "summaries": summaries,
+            "replicates": replicate_frame, "protocol": {"paired": True, "group_key": "hearing_id", "n_replicates": n_replicates,
+                                                          "seed": seed, "confidence_level": confidence_level,
+                                                          "same_samples_all_conditions": True, "same_samples_all_seeds": True,
+                                                          "preserve_group_multiplicity": True, "campaign_statistic": "mean paired seed effects",
+                                                          "metrics": list(metrics), "delta_orientation": "condition_b - condition_a"}}
+
+
 @dataclass(frozen=True)
 class BootstrapConfig:
     output_root: Path

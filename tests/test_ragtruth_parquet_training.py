@@ -70,16 +70,37 @@ def test_group_split_is_deterministic_and_isolates_sources(tmp_path: Path) -> No
 
 def test_collator_preserves_four_slots_and_boolean_mask() -> None:
     class Tokenizer:
+        def __init__(self) -> None:
+            self.truncation = None
+
         def __call__(self, premises, claims, **kwargs):
+            self.truncation = kwargs["truncation"]
             return {"input_ids": torch.ones((len(premises), 3), dtype=torch.long), "attention_mask": torch.ones((len(premises), 3), dtype=torch.long)}
 
-    collator = BagCollator(Tokenizer(), 8)
+    tokenizer = Tokenizer()
+    collator = BagCollator(tokenizer, 8)
     batch = collator([
         {"example_id": "e", "source_id": "s", "task_type": "QA", "claim": "c", "evidence": ["a", "b", "", ""], "evidence_mask": [True, True, False, False], "label": 0}
     ])
     assert tuple(batch["input_ids"].shape) == (1, 4, 3)
     assert batch["evidence_mask"].dtype == torch.bool
     assert batch["evidence_mask"].tolist() == [[True, True, False, False]]
+    assert tokenizer.truncation == "only_first"
+
+    pt_tokenizer = Tokenizer()
+    BagCollator(pt_tokenizer, 8, "longest_first")([
+        {"example_id": "e", "source_id": "s", "task_type": "QA", "claim": "claim longo", "evidence": ["a", "b", "", ""], "evidence_mask": [True, True, False, False], "label": 0}
+    ])
+    assert pt_tokenizer.truncation == "longest_first"
+
+
+def test_pt_nllb_uses_explicit_longest_first_without_changing_english_default() -> None:
+    pt_config = load_config(Path("configs/ragtruth_pt_nllb_filtered_lora_attention_mil_confirmatory.yaml"))
+    english_config = load_config(Path("configs/ragtruth_lora_attention_mil_confirmatory.yaml"))
+    assert pt_config.truncation == "longest_first"
+    assert pt_config.to_dict()["truncation"] == "longest_first"
+    assert english_config.truncation == "only_first"
+    assert "truncation" not in english_config.to_dict()
 
 
 def test_validate_data_only_config_does_not_require_model(tmp_path: Path) -> None:
@@ -93,4 +114,3 @@ def test_validate_data_only_config_does_not_require_model(tmp_path: Path) -> Non
     assert result["model_loaded"] is False
     assert result["forward_executed"] is False
     assert result["pos_weight"]["value"] is not None
-

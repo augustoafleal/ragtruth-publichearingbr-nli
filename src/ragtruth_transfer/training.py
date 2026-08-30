@@ -52,12 +52,33 @@ def prepare_training_data(
 ) -> tuple[EvidenceBagDataset, EvidenceBagDataset, EvidenceBagDataset, dict[str, Any], dict[str, str]]:
     if config.dataset.format == "jsonl":
         if data_dir is None:
+            data_dir = config.dataset.path
+        if data_dir is None:
             raise ValueError("--data-dir é obrigatório para dataset.format=jsonl")
         data_hashes = _data_hashes(data_dir)
         train_dataset = EvidenceBagDataset(data_dir / "train.jsonl")
         validation_dataset = EvidenceBagDataset(data_dir / "validation.jsonl")
         test_dataset = EvidenceBagDataset(data_dir / "test.jsonl")
-        metadata = {"dataset_format": "jsonl", "data_dir": str(data_dir.resolve()), "split": {"strategy": "precomputed_jsonl_split", "group_key": "source_id"}}
+        manifest_path = data_dir / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.is_file():
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                manifest = loaded
+        metadata = {
+            "dataset_format": "jsonl",
+            "data_dir": str(data_dir.resolve()),
+            "manifest_path": str(manifest_path.resolve()),
+            "signature": manifest.get("run_signature"),
+            "schema_version": manifest.get("schema_version"),
+            "dataset_sha256": manifest.get("dataset_sha256"),
+            "split_signature": manifest.get("split_signature"),
+            "split": {
+                "strategy": "precomputed_jsonl_split",
+                "group_key": "source_id",
+                "signature": manifest.get("split_signature"),
+            },
+        }
         return train_dataset, validation_dataset, test_dataset, metadata, data_hashes
 
     parquet_path = config.dataset.path or data_dir
@@ -157,12 +178,19 @@ def _jsonable(value: Any) -> Any:
 
 
 def _data_hashes(data_dir: Path) -> dict[str, str]:
-    return {
+    result = {
         "manifest": sha256_file(data_dir / "manifest.json"),
         "train": sha256_file(data_dir / "train.jsonl"),
         "validation": sha256_file(data_dir / "validation.jsonl"),
         "test": sha256_file(data_dir / "test.jsonl"),
     }
+    manifest = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
+    if isinstance(manifest, dict):
+        for key in ("dataset_sha256", "split_signature"):
+            value = manifest.get(key)
+            if value:
+                result[key if key != "split_signature" else "split"] = str(value)
+    return result
 
 
 def scientific_fingerprint(
@@ -207,7 +235,7 @@ def make_loader(
         sampler=sampler,
         generator=generator,
         num_workers=config.training.num_workers,
-        collate_fn=BagCollator(tokenizer, config.max_length),
+        collate_fn=BagCollator(tokenizer, config.max_length, config.truncation),
         pin_memory=torch.cuda.is_available(),
     )
 
@@ -510,6 +538,8 @@ def train_run(
     max_validation_sources: int | None = None,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    if config.dataset.format == "jsonl" and data_dir is None:
+        data_dir = config.dataset.path
     planned_total_epochs = config.training.planned_total_epochs
     stop_after = stop_after_epoch if stop_after_epoch is not None else config.training.stop_after_epoch
     if stop_after is None:

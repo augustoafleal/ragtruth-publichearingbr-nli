@@ -1,0 +1,14 @@
+# Copy this file to ragtruth_translation_qa.local.yaml for a local run.
+# Paths are relative to the repository root.
+data:
+  source_dir: data/processed/ragtruth_textual
+  translated_dir: data/processed/ragtruth_textual_pt_nllb
+  filtered_dir: data/processed/ragtruth_textual_pt_nllb_filtered
+
+qa:
+  min_length_ratio: 0.40
+  max_length_ratio: 2.50
+  repetition_min_run: 4
+  expected_candidate_translation_pairs: 216
+  random_seed: 42
+  random_examples: 30
