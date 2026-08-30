@@ -50,17 +50,19 @@ def _weighted_average_precision(
 def validate_factorial_frames(
     frames: dict[str, dict[int, pd.DataFrame]],
     *,
+    conditions: tuple[str, ...] | None = None,
     seeds: tuple[int, ...] = (0, 1, 2),
     expected_rows: int = 4235,
     expected_positives: int = 501,
     expected_hearings: int = 206,
     score_column: str = "probability",
 ) -> dict[str, Any]:
-    if set(frames) != set(CONDITIONS):
-        raise ValueError(f"Expected conditions {CONDITIONS}, got {tuple(sorted(frames))}")
+    condition_names = tuple(conditions or CONDITIONS)
+    if set(frames) != set(condition_names):
+        raise ValueError(f"Expected conditions {condition_names}, got {tuple(sorted(frames))}")
     reference: pd.DataFrame | None = None
     audit: dict[str, Any] = {}
-    for condition in CONDITIONS:
+    for condition in condition_names:
         if set(frames[condition]) != set(seeds):
             raise ValueError(f"Missing seeds for {condition}: {sorted(frames[condition])}")
         audit[condition] = {}
@@ -96,11 +98,15 @@ def validate_factorial_frames(
             "exact_label_alignment": True, "probabilities_valid": True, "per_condition": audit}
 
 
-def _summary(values: np.ndarray, confidence_level: float) -> dict[str, float | int]:
+def _summary(values: np.ndarray, confidence_level: float, metric: str = "auprc") -> dict[str, float | int]:
     alpha = 1.0 - confidence_level
+    favorable = values < 0 if metric == "brier" else values > 0
     return {"mean": float(values.mean()), "median": float(np.median(values)),
             "ci_lower": float(np.quantile(values, alpha / 2)), "ci_upper": float(np.quantile(values, 1 - alpha / 2)),
-            "bootstrap_support_probability_delta_gt_zero": float(np.mean(values > 0)), "n_valid": int(len(values))}
+            "bootstrap_support_probability_delta_gt_zero": float(np.mean(values > 0)),
+            "bootstrap_support_probability_delta_lt_zero": float(np.mean(values < 0)),
+            "probability_favorable": float(np.mean(favorable)), "favorable_direction": "lower" if metric == "brier" else "higher",
+            "n_valid": int(len(values))}
 
 
 def run_factorial_bootstrap(
@@ -115,9 +121,32 @@ def run_factorial_bootstrap(
     expected_rows: int = 4235,
     expected_positives: int = 501,
     expected_hearings: int = 206,
+    conditions: tuple[str, ...] | None = None,
+    contrasts: dict[str, tuple[str, str]] | None = None,
+    interactions: dict[str, tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     if not metrics or not set(metrics).issubset(METRICS):
         raise ValueError(f"metrics must be a non-empty subset of {METRICS}, got {metrics}")
+    condition_names = tuple(conditions or CONDITIONS)
+    contrast_definitions = contrasts or CONTRASTS
+    interaction_definitions = interactions or {}
+    if conditions is not None or contrasts is not None or interactions is not None:
+        from .paired_grouped_bootstrap import run_generic_pairwise_bootstrap
+
+        return run_generic_pairwise_bootstrap(
+            frames,
+            contrast_definitions,
+            interactions=interaction_definitions,
+            seeds=seeds,
+            n_replicates=n_replicates,
+            seed=seed,
+            confidence_level=confidence_level,
+            metrics=metrics,
+            expected_rows=expected_rows,
+            expected_positives=expected_positives,
+            expected_hearings=expected_hearings,
+            score_column=score_column,
+        )
     population = validate_factorial_frames(
         frames,
         seeds=seeds,
@@ -166,11 +195,14 @@ def run_factorial_bootstrap(
         indices = np.concatenate([group_indices[position] for position in sampled_positions])
         hearing_multiplicity = np.bincount(sampled_positions, minlength=len(groups))
         row_weights = hearing_multiplicity[group_codes]
+        valid = np.unique(labels[indices]).size == 2
         replicate_values: dict[str, dict[str, float]] = {}
         for condition in CONDITIONS:
             replicate_values[condition] = {}
             for metric in metrics:
-                if metric == "auprc":
+                if not valid:
+                    replicate_values[condition][metric] = float("nan")
+                elif metric == "auprc":
                     replicate_values[condition][metric] = float(np.mean([
                         _weighted_average_precision(
                             labels_sorted,
@@ -189,7 +221,7 @@ def run_factorial_bootstrap(
                          "delta": (replicate_values["pt_set"][metric] - replicate_values["pt_attention"][metric]) - (replicate_values["en_set"][metric] - replicate_values["en_attention"][metric])})
 
     replicate_frame = pd.DataFrame(rows)
-    summaries = {contrast: {metric: _summary(replicate_frame.loc[(replicate_frame.contrast == contrast) & (replicate_frame.metric == metric), "delta"].to_numpy(float), confidence_level) for metric in metrics} for contrast in (*CONTRASTS, "interaction")}
+    summaries = {contrast: {metric: _summary(replicate_frame.loc[(replicate_frame.contrast == contrast) & (replicate_frame.metric == metric), "delta"].dropna().to_numpy(float), confidence_level, metric) for metric in metrics} for contrast in (*CONTRASTS, "interaction")}
     return {"population": population, "observed": observed, "observed_campaign": observed_campaign, "summaries": summaries,
             "replicates": replicate_frame, "protocol": {"paired": True, "group_key": "hearing_id", "n_replicates": n_replicates,
                                                           "seed": seed, "confidence_level": confidence_level, "same_samples_all_conditions": True,

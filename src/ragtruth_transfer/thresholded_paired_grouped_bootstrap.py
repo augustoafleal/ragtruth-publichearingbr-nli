@@ -454,6 +454,94 @@ GENERIC_METRIC_KEYS = {
 GENERIC_REGIME_KEYS = {"best_f1": "f1", "fpr10": "fpr10"}
 
 
+def run_generic_thresholded_pair_bootstrap(
+    frames: dict[str, dict[int, pd.DataFrame]],
+    thresholds: dict[str, dict[int, dict[str, float]]],
+    condition_a: str,
+    condition_b: str,
+    *,
+    seeds: tuple[int, ...] = EXPECTED_SEEDS,
+    regimes: tuple[str, ...] = REGIMES,
+    n_replicates: int = 10000,
+    seed: int = 20260815,
+    confidence_level: float = 0.95,
+    score_column: str = "probability",
+    expected_rows: int = EXPECTED_ROWS,
+    expected_positives: int = EXPECTED_POSITIVES,
+    expected_hearings: int = EXPECTED_HEARINGS,
+) -> dict[str, Any]:
+    if condition_a == condition_b or condition_a not in frames or condition_b not in frames:
+        raise ValueError("Condições thresholded inválidas")
+    if set(regimes) != set(REGIMES) or n_replicates < 1:
+        raise ValueError("Regimes ou número de réplicas inválido")
+    from .paired_grouped_bootstrap import validate_generic_paired_frames
+
+    pair_frames = {condition_a: frames[condition_a], condition_b: frames[condition_b]}
+    population = validate_generic_paired_frames(pair_frames, conditions=(condition_a, condition_b), seeds=seeds,
+                                                 expected_rows=expected_rows, expected_positives=expected_positives,
+                                                 expected_hearings=expected_hearings, score_column=score_column)
+    reference = frames[condition_a][seeds[0]][["example_id", "hearing_id", "label"]].copy()
+    reference["example_id"] = reference.example_id.astype(str)
+    reference = reference.set_index("example_id").sort_index()
+    labels = reference.label.to_numpy(int)
+    group_values = reference.hearing_id.astype(str).to_numpy()
+    groups = sorted(np.unique(group_values).tolist())
+    group_indices = [np.flatnonzero(group_values == group) for group in groups]
+    scores: dict[str, dict[int, np.ndarray]] = {condition_a: {}, condition_b: {}}
+    observed: dict[str, dict[str, dict[str, float]]] = {condition_a: {}, condition_b: {}}
+    for condition in (condition_a, condition_b):
+        for paired_seed in seeds:
+            current = frames[condition][paired_seed].copy()
+            current["example_id"] = current.example_id.astype(str)
+            indexed = current.set_index("example_id").sort_index()
+            values = indexed.loc[reference.index, score_column].to_numpy(float)
+            scores[condition][paired_seed] = values
+            observed[condition][str(paired_seed)] = {}
+            for regime in regimes:
+                observed[condition][str(paired_seed)][regime] = _generic_metrics(labels, values, thresholds[condition][paired_seed][regime])
+    rows: list[dict[str, Any]] = []
+    rng = np.random.default_rng(seed)
+    for replicate_id in range(n_replicates):
+        sampled_positions = rng.integers(0, len(groups), size=len(groups))
+        indices = np.concatenate([group_indices[position] for position in sampled_positions])
+        sampled_labels = labels[indices]
+        valid = np.unique(sampled_labels).size == 2
+        reason = None if valid else "single_class_resample"
+        for regime in regimes:
+            for paired_seed in seeds:
+                values_a = _bootstrap_metric_values(sampled_labels, scores[condition_a][paired_seed][indices] >= thresholds[condition_a][paired_seed][regime]) if valid else None
+                values_b = _bootstrap_metric_values(sampled_labels, scores[condition_b][paired_seed][indices] >= thresholds[condition_b][paired_seed][regime]) if valid else None
+                for metric in ("precision", "recall", "f1", "mcc", "fpr", "balanced_accuracy", "specificity", "accuracy"):
+                    key = GENERIC_METRIC_KEYS[metric]
+                    rows.append({"replicate_id": replicate_id, "regime": regime, "seed": paired_seed, "metric": metric,
+                                 "condition_a_value": np.nan if not valid else values_a[metric],
+                                 "condition_b_value": np.nan if not valid else values_b[metric],
+                                 "delta": np.nan if not valid else values_b[metric] - values_a[metric],
+                                 "valid": valid, "invalid_reason": reason, "threshold_a": thresholds[condition_a][paired_seed][regime],
+                                 "threshold_b": thresholds[condition_b][paired_seed][regime], "n_rows": len(indices),
+                                 "n_sampled_groups": len(groups), "n_unique_groups": len(np.unique(sampled_positions)),
+                                 "n_positive": int(sampled_labels.sum()), "n_negative": int((sampled_labels == 0).sum())})
+    replicate_frame = pd.DataFrame(rows)
+    summaries: dict[str, Any] = {}
+    for regime in regimes:
+        summaries[regime] = {}
+        for metric in ("precision", "recall", "f1", "mcc", "fpr", "balanced_accuracy", "specificity", "accuracy"):
+            key = GENERIC_METRIC_KEYS[metric]
+            valid_rows = replicate_frame.loc[(replicate_frame.regime == regime) & (replicate_frame.metric == metric) & replicate_frame.valid]
+            values = valid_rows.groupby("replicate_id", sort=False)["delta"].mean().to_numpy(float)
+            point_a = float(np.mean([observed[condition_a][str(s)][regime][key] for s in seeds]))
+            point_b = float(np.mean([observed[condition_b][str(s)][regime][key] for s in seeds]))
+            summaries[regime][metric] = {"point_a": point_a, "point_b": point_b, "observed_delta": point_b - point_a,
+                                         "bootstrap": _generic_summary(values, confidence_level, metric == "fpr"),
+                                         "valid_replicates": int(len(values)), "invalid_replicates": int(n_replicates - len(values))}
+    return {"population": population, "observed": observed, "summaries": summaries, "replicates": replicate_frame,
+            "protocol": {"paired": True, "group_key": "hearing_id", "delta_orientation": "condition_b - condition_a",
+                         "n_replicates": n_replicates, "seed": seed, "confidence_level": confidence_level,
+                         "same_samples_across_seeds": True, "same_samples_across_regimes": True,
+                         "preserve_group_multiplicity": True, "thresholds_reestimated": False,
+                         "threshold_source": "validation artifacts"}}
+
+
 @dataclass(frozen=True)
 class CampaignSpec:
     label: str
@@ -768,11 +856,15 @@ def _generic_validate_observed_artifacts(spec: CampaignSpec, config: GenericThre
 
 def _generic_summary(values: np.ndarray, confidence_level: float, favorable_lower: bool = False) -> dict[str, Any]:
     if not len(values):
-        return {"mean": None, "median": None, "ci_lower": None, "ci_upper": None, "favorable_probability": None, "n_valid": 0}
+        return {"mean": None, "median": None, "ci_lower": None, "ci_upper": None, "p_delta_gt_zero": None,
+                "p_delta_lt_zero": None, "favorable_probability": None, "probability_favorable": None,
+                "favorable_direction": "lower" if favorable_lower else "higher", "n_valid": 0}
     alpha = 1.0 - confidence_level
     probability = float(np.mean(values < 0 if favorable_lower else values > 0))
     return {"mean": float(values.mean()), "median": float(np.median(values)), "ci_lower": float(np.quantile(values, alpha / 2)),
-            "ci_upper": float(np.quantile(values, 1 - alpha / 2)), "favorable_probability": probability, "n_valid": int(len(values))}
+            "ci_upper": float(np.quantile(values, 1 - alpha / 2)), "p_delta_gt_zero": float(np.mean(values > 0)),
+            "p_delta_lt_zero": float(np.mean(values < 0)), "favorable_probability": probability, "probability_favorable": probability,
+            "favorable_direction": "lower" if favorable_lower else "higher", "n_valid": int(len(values))}
 
 
 def _generic_observed(config: GenericThresholdedBootstrapConfig, frames: dict[str, dict[int, pd.DataFrame]],
