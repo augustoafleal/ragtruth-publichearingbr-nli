@@ -28,7 +28,7 @@ from ragtruth_transfer.paper_reporting import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.integration
+@pytest.mark.frozen_artifacts
 def test_official_provenance_and_superseded_rejection():
     ctx = validate_sources(build_source_registry(ROOT))
     assert ctx["registry"]["OFFICIAL_BOOTSTRAP_RUN"].name == OFFICIAL_RUN_ID
@@ -37,7 +37,7 @@ def test_official_provenance_and_superseded_rejection():
         build_source_registry(ROOT, official_run=ROOT / "runs/publichearing_final_paired_bootstrap" / SUPERSEDED_RUN_ID)
 
 
-@pytest.mark.integration
+@pytest.mark.frozen_artifacts
 def test_main_tables_thresholded_invariants_and_forest_smoke(tmp_path):
     ctx = validate_sources(build_source_registry(ROOT))
     ctx["root"] = ROOT
@@ -90,7 +90,7 @@ def test_main_tables_thresholded_invariants_and_forest_smoke(tmp_path):
     assert not list(paths["figures"].glob("*.pdf"))
 
 
-@pytest.mark.integration
+@pytest.mark.frozen_artifacts
 def test_full_reporting_registry_and_repeatability(tmp_path):
     first = generate_paper_results(root=ROOT, output_root=tmp_path)
     expected_stems = {

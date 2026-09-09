@@ -22,13 +22,10 @@ CONFIG_PATH = Path("configs/publichearing_pt_nllb_attention_vs_set_thresholded_b
 def _require_frozen_campaigns() -> GenericThresholdedBootstrapConfig:
     config = load_thresholded_config(CONFIG_PATH)
     assert isinstance(config, GenericThresholdedBootstrapConfig)
-    missing = [str(spec.path / "manifest.json") for spec in (config.attention, config.set_transformer) if not (spec.path / "manifest.json").is_file()]
-    if missing:
-        pytest.skip(f"requires frozen PT-NLLB campaign artifacts: {', '.join(missing)}")
     return config
 
 
-@pytest.mark.integration
+@pytest.mark.frozen_artifacts
 def test_attention_and_set_campaigns_are_accepted_by_preflight():
     config = _require_frozen_campaigns()
     result = run_generic_thresholded_bootstrap(config, validate_only=True)
@@ -71,7 +68,7 @@ def test_summary_uses_lower_is_better_direction_for_fpr():
     assert _generic_summary(values, 0.95, favorable_lower=False)["favorable_probability"] == 0.5
 
 
-@pytest.mark.integration
+@pytest.mark.frozen_artifacts
 def test_small_real_bootstrap_is_deterministic_and_thresholds_are_fixed(tmp_path):
     config = _require_frozen_campaigns()
     small = replace(config, n_replicates=3, output_root=tmp_path / "analysis_a")
