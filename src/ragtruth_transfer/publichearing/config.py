@@ -6,12 +6,16 @@ from typing import Any
 
 import yaml
 
+from ..config import SetTransformerSettings
+
 
 @dataclass(frozen=True)
 class PublicHearingConfig:
     run_name: str = "publichearing_lora_attention_mil"
     output_root: str = "results/publichearing_lora_attention_mil"
     mode: str = "screening"
+    architecture: str = "gated_attention"
+    set_transformer: SetTransformerSettings | None = None
     dataset_repo: str = "unicamp-dl/PublicHearingBR"
     dataset_filename: str = "PublicHearingBR_NLI.jsonl"
     dataset_revision: str = "2f84a44bc34df483e25c987f0ff86caad0ab3433"
@@ -55,6 +59,12 @@ class PublicHearingConfig:
     def __post_init__(self) -> None:
         if self.mode not in {"screening", "confirmatory", "smoke"}:
             raise ValueError("mode deve ser screening, confirmatory ou smoke")
+        if self.architecture not in {"gated_attention", "set_transformer"}:
+            raise ValueError("architecture deve ser gated_attention ou set_transformer")
+        if self.architecture == "set_transformer" and self.set_transformer is None:
+            raise ValueError("set_transformer é obrigatório para architecture=set_transformer")
+        if self.architecture != "set_transformer" and self.set_transformer is not None:
+            raise ValueError("set_transformer só é aceito com architecture=set_transformer")
         if self.outer_splits < 2 or self.inner_splits < 2:
             raise ValueError("outer_splits e inner_splits devem ser >= 2")
         if not self.seeds:
@@ -77,7 +87,12 @@ class PublicHearingConfig:
         return self.smoke_outer_splits or self.outer_splits
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        serialized = asdict(self)
+        if self.architecture == "gated_attention" and self.set_transformer is None:
+            # Keep the historical representation used by existing campaign signatures.
+            serialized.pop("architecture")
+            serialized.pop("set_transformer")
+        return serialized
 
 
 def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
@@ -116,6 +131,16 @@ def load_publichearing_config(path: Path, overrides: list[str] | None = None) ->
             key = key.rsplit(".", 1)[-1]
         normalized[key] = yaml.safe_load(value)
     normalized = _normalize(normalized)
+    set_transformer_raw = normalized.get("set_transformer")
+    if set_transformer_raw is not None:
+        if not isinstance(set_transformer_raw, dict):
+            raise ValueError("set_transformer deve ser um mapa")
+        normalized["set_transformer"] = SetTransformerSettings(
+            num_sab_layers=int(set_transformer_raw.get("num_sab_layers", 1)),
+            num_heads=int(set_transformer_raw.get("num_heads", 4)),
+            num_seeds=int(set_transformer_raw.get("num_seeds", 1)),
+            ffn_dim=int(set_transformer_raw.get("ffn_dim", 128)),
+        )
     allowed = set(PublicHearingConfig.__dataclass_fields__)
     unknown = sorted(set(normalized) - allowed)
     if unknown:
