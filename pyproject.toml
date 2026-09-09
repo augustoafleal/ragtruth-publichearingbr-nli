@@ -38,4 +38,5 @@ pythonpath = ["src", "."]
 testpaths = ["tests"]
 markers = [
   "integration: requires frozen scientific artifacts that are not versioned in the repository",
+  "frozen_artifacts: requires frozen reporting artifacts that are not versioned in the repository",
 ]
