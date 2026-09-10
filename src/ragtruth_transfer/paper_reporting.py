@@ -71,6 +71,8 @@ def build_source_registry(root: Path, official_run: Path | str | None = None, ou
         "BASELINE_RESULTS": (root / "runs/publichearing_off_the_shelf_max_entailment/54d9c623f8685c39").resolve(),
         "OFF_THE_SHELF_THRESHOLDED": (root / "runs/ragtruth_off_the_shelf_threshold_transfer/3ceffc4a74b484fe/publichearing_metrics.json").resolve(),
         "SUPERVISED_RESULTS": (root / "results/publichearing_lora_attention_mil/741ed3152c2175e7/outputs/overall_oof_metrics.csv").resolve(),
+        "SUPERVISED_SET_RESULTS": (root / "results/publichearing_lora_set_transformer_mil/80eb95b5698f4a75/outputs/overall_oof_metrics.csv").resolve(),
+        "SUPERVISED_SET_RUN_CONFIG": (root / "results/publichearing_lora_set_transformer_mil/80eb95b5698f4a75/run_config.json").resolve(),
         "FILTERED_AGGREGATE": (root / "runs/ragtruth_pt_nllb_filtered_confirmatory/63745412afdb52ac/aggregate/aggregate_metrics.csv").resolve(),
         "BERTIMBAU_AGGREGATE": (root / "runs/ragtruth_pt_nllb_bertimbau_confirmatory/fce6272e2e72726d/aggregate/aggregate_metrics.csv").resolve(),
         "PT_NLLB_THRESHOLDED": (root / "runs/publichearing_pt_nllb_attention_vs_set_thresholded_bootstrap/e0c75270065fc471/bootstrap_summary.json").resolve(),
@@ -86,7 +88,7 @@ def validate_sources(registry: dict[str, Path]) -> dict[str, Any]:
     required = [
         "OFFICIAL_BOOTSTRAP_RUN", "FINAL_SUMMARY", "FINAL_REPORT", "MANIFEST",
         "RESOLVED_CONFIG", "POPULATION_VALIDATION", "POOLING_RESULTS",
-        "BASELINE_RESULTS", "OFF_THE_SHELF_THRESHOLDED", "SUPERVISED_RESULTS", "FILTERED_AGGREGATE",
+        "BASELINE_RESULTS", "OFF_THE_SHELF_THRESHOLDED", "SUPERVISED_RESULTS", "SUPERVISED_SET_RESULTS", "SUPERVISED_SET_RUN_CONFIG", "FILTERED_AGGREGATE",
         "BERTIMBAU_AGGREGATE", "PT_NLLB_THRESHOLDED",
     ]
     missing = []
@@ -108,6 +110,20 @@ def validate_sources(registry: dict[str, Path]) -> dict[str, Any]:
     config = read_json(registry["RESOLVED_CONFIG"])
     population = read_json(registry["POPULATION_VALIDATION"])
     summary = pd.read_csv(registry["FINAL_SUMMARY"])
+    set_run_config = read_json(registry["SUPERVISED_SET_RUN_CONFIG"])
+    if {
+        set_run_config.get("experiment"),
+        set_run_config.get("configuration", {}).get("mode"),
+        set_run_config.get("configuration", {}).get("architecture"),
+    } != {
+        "publichearingbr_lora_set_transformer_mil_5fold", "confirmatory", "set_transformer"
+    }:
+        raise AssertionError("Set Transformer in-domain run_config has invalid provenance.")
+    set_metrics = pd.read_csv(registry["SUPERVISED_SET_RESULTS"])
+    if set_metrics["criterion"].value_counts().to_dict() != {"ranking": 1, "max_f1": 1, "fpr_operational": 1}:
+        raise AssertionError("Set Transformer in-domain metrics must preserve all three criteria.")
+    if not {"AUPRC", "AUROC", "Brier", "Precision", "Recall", "F1", "FPR"} <= set(set_metrics.columns):
+        raise AssertionError("Set Transformer in-domain metrics lack operational columns.")
     if manifest.get("signature") != OFFICIAL_RUN_ID or manifest.get("status") != "completed":
         raise AssertionError("Official manifest is not completed or has the wrong signature.")
     checks = {
@@ -309,18 +325,21 @@ def build_tables(ctx: dict[str, Any], paths: dict[str, Path]) -> dict[str, pd.Da
     baseline = read_json(registry["BASELINE_RESULTS"] / "metrics.json")
     supervised = pd.read_csv(registry["SUPERVISED_RESULTS"])
     ranking = supervised.loc[supervised["criterion"].eq("ranking")].iloc[0]
+    supervised_set = pd.read_csv(registry["SUPERVISED_SET_RESULTS"])
+    ranking_set = supervised_set.loc[supervised_set["criterion"].eq("ranking")].iloc[0]
     table4 = pd.DataFrame([
         {"Method": "Off-the-shelf NLI", "Target supervision": "No", "AUPRC": float(baseline["AUPRC"]), "AUROC": float(baseline["AUROC"])},
-        {"Method": "EN + Attention", "Target supervision": "No", "AUPRC": point(points, "en_attention_ph_pt", "auprc"), "AUROC": point(points, "en_attention_ph_pt", "auroc")},
-        {"Method": "EN + Set", "Target supervision": "No", "AUPRC": point(points, "en_set_ph_pt", "auprc"), "AUROC": point(points, "en_set_ph_pt", "auroc")},
-        {"Method": "Target-supervised Attention", "Target supervision": "Yes (out-of-fold)", "AUPRC": float(ranking["AUPRC"]), "AUROC": float(ranking["AUROC"])},
+        {"Method": "Gated Attention MIL - zero-shot", "Target supervision": "No", "AUPRC": point(points, "en_attention_ph_pt", "auprc"), "AUROC": point(points, "en_attention_ph_pt", "auroc")},
+        {"Method": "Set Transformer - zero-shot", "Target supervision": "No", "AUPRC": point(points, "en_set_ph_pt", "auprc"), "AUROC": point(points, "en_set_ph_pt", "auroc")},
+        {"Method": "Gated Attention MIL - in-domain OOF", "Target supervision": "Yes (out-of-fold)", "AUPRC": float(ranking["AUPRC"]), "AUROC": float(ranking["AUROC"])},
+        {"Method": "Set Transformer - in-domain OOF", "Target supervision": "Yes (out-of-fold)", "AUPRC": float(ranking_set["AUPRC"]), "AUROC": float(ranking_set["AUROC"])},
     ])
     table4_export = table4.copy()
     for col in ["AUPRC", "AUROC"]:
         table4_export[col] = table4_export[col].map(fmt)
     save_table(table4_export, paths["tables"] / "table_baselines.csv", paths["tables"] / "table_baselines.tex", "Contextual baselines on PublicHearingBR", "llrr")
     with (paths["tables"] / "table_baselines.tex").open("a") as handle:
-        handle.write("\\par\\smallskip\\noindent\\textit{The supervised model follows an out-of-fold target-domain protocol and is included only as descriptive context, not as a paired statistical comparison.}\\n")
+        handle.write("\\par\\smallskip\\noindent\\textit{The supervised models follow an out-of-fold target-domain protocol and are included only as descriptive context, not as a paired statistical comparison.}\\n")
 
     pooling_observed = read_json(registry["POOLING_RESULTS"] / "observed_metrics.json")["campaigns"]
     pooling = pd.DataFrame([
@@ -661,7 +680,7 @@ def build_figures(ctx: dict[str, Any], tables: dict[str, pd.DataFrame], paths: d
     pooling_auroc = [float(baseline_metrics["AUROC"]), *pooling["AUROC"].astype(float).tolist()]
     register("figure_pooling_ablations", "AUPRC/AUROC", "Cross-lingual zero-shot transfer from RAGTruth EN to PublicHearingBR PT", "Appendix", "AUPRC and AUROC for NLI off-the-shelf and pooling methods under RAGTruth EN to PublicHearingBR PT zero-shot transfer.", [registry["BASELINE_RESULTS"] / "metrics.json", registry["POOLING_RESULTS"] / "observed_metrics.json"], grouped_metric_figure(pooling_labels, pooling_auprc, pooling_auroc, "Metric value", "RAGTruth EN → PublicHearingBR PT: zero-shot pooling comparison", False, value_labels=True, series_labels=("AUPRC", "AUROC")))
     baseline = tables["table4"]
-    register("figure_contextual_baselines", "AUPRC/AUROC", "Contextual baselines on PublicHearingBR", "Appendix", "Supervised result is descriptive context only.", registry["BASELINE_RESULTS"] / "metrics.json", grouped_metric_figure(baseline["Method"].tolist(), baseline["AUPRC"].tolist(), baseline["AUROC"].tolist(), "Metric value", "Contextual baselines", False, series_labels=("AUPRC", "AUROC")))
+    register("figure_contextual_baselines", "AUPRC/AUROC", "Contextual baselines on PublicHearingBR", "Appendix", "Supervised results are descriptive context only.", [registry["BASELINE_RESULTS"] / "metrics.json", registry["SUPERVISED_RESULTS"], registry["SUPERVISED_SET_RESULTS"]], grouped_metric_figure(baseline["Method"].tolist(), baseline["AUPRC"].tolist(), baseline["AUROC"].tolist(), "Metric value", "Contextual baselines", False, series_labels=("AUPRC", "AUROC")))
     return records
 
 
@@ -703,7 +722,7 @@ def build_summary_and_claims(ctx: dict[str, Any], tables: dict[str, pd.DataFrame
         {"claim_id": "C3", "claim": "Training translation does not provide consistent overall improvement over EN", "evidence": f"NLLB {fmt_signed(training_nllb['observed_delta'])} {ci_text(training_nllb)}; MADLAD {fmt_signed(training_madlad['observed_delta'])} {ci_text(training_madlad)}.", "statistical_status": "SUPPORTED", "allowed_wording": "Explicit training translation does not provide a consistent improvement over EN training.", "destination": "Discussion"},
         {"claim_id": "C4", "claim": "Target translation substantially degrades transfer", "evidence": f"Set target deltas: NLLB {fmt_signed(target_nllb['observed_delta'])} {ci_text(target_nllb)}; MADLAD {fmt_signed(target_madlad['observed_delta'])} {ci_text(target_madlad)}.", "statistical_status": "SUPPORTED", "allowed_wording": "Target translation produces large ranking degradation for both translators.", "destination": "Results"},
         {"claim_id": "C5", "claim": "Target-side translation is more harmful than training-side translation", "evidence": f"Set interactions: NLLB {fmt_signed(interaction_nllb['observed_delta'])} {ci_text(interaction_nllb)}; MADLAD {fmt_signed(interaction_madlad['observed_delta'])} {ci_text(interaction_madlad)}.", "statistical_status": "SUPPORTED", "allowed_wording": "Target-side translation is associated with larger degradation than training-side translation.", "destination": "Results"},
-        {"claim_id": "C6", "claim": "EN+Set approaches target-supervised Attention descriptively", "evidence": f"EN + Set ({fmt(table4.loc[table4['Method'].eq('EN + Set'), 'AUPRC'].iloc[0])}/{fmt(table4.loc[table4['Method'].eq('EN + Set'), 'AUROC'].iloc[0])}) and target-supervised Attention ({fmt(table4.loc[table4['Method'].eq('Target-supervised Attention'), 'AUPRC'].iloc[0])}/{fmt(table4.loc[table4['Method'].eq('Target-supervised Attention'), 'AUROC'].iloc[0])}).", "statistical_status": "DESCRIPTIVE_ONLY", "allowed_wording": "EN+Set approaches the target-supervised Attention result descriptively; no paired equivalence or superiority claim is made.", "destination": "Results"},
+        {"claim_id": "C6", "claim": "EN+Set approaches target-supervised Attention descriptively", "evidence": f"Set Transformer zero-shot ({fmt(table4.loc[table4['Method'].eq('Set Transformer - zero-shot'), 'AUPRC'].iloc[0])}/{fmt(table4.loc[table4['Method'].eq('Set Transformer - zero-shot'), 'AUROC'].iloc[0])}) and target-supervised Gated Attention ({fmt(table4.loc[table4['Method'].eq('Gated Attention MIL - in-domain OOF'), 'AUPRC'].iloc[0])}/{fmt(table4.loc[table4['Method'].eq('Gated Attention MIL - in-domain OOF'), 'AUROC'].iloc[0])}).", "statistical_status": "DESCRIPTIVE_ONLY", "allowed_wording": "Set Transformer zero-shot and target-supervised Gated Attention are shown as descriptive contextual references; no paired equivalence or superiority claim is made.", "destination": "Results"},
     ])
     if claims.loc[claims["claim_id"].eq("C6"), "statistical_status"].iloc[0] != "DESCRIPTIVE_ONLY":
         raise AssertionError("Supervised comparison must remain descriptive only.")

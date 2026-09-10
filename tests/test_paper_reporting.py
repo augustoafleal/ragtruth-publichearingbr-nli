@@ -32,6 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_official_provenance_and_superseded_rejection():
     ctx = validate_sources(build_source_registry(ROOT))
     assert ctx["registry"]["OFFICIAL_BOOTSTRAP_RUN"].name == OFFICIAL_RUN_ID
+    set_config = ctx["registry"]["SUPERVISED_SET_RUN_CONFIG"]
+    assert set_config.is_file()
     assert not ctx["orientation_mismatches"]
     with pytest.raises(ValueError, match=SUPERSEDED_RUN_ID):
         build_source_registry(ROOT, official_run=ROOT / "runs/publichearing_final_paired_bootstrap" / SUPERSEDED_RUN_ID)
@@ -50,6 +52,24 @@ def test_main_tables_thresholded_invariants_and_forest_smoke(tmp_path):
     tables = build_tables(ctx, paths)
     assert len(tables["table1"]) == 5
     assert len(tables["table2"]) == 5
+    assert set(tables["table4"]["Method"]) >= {
+        "Gated Attention MIL - zero-shot",
+        "Set Transformer - zero-shot",
+        "Gated Attention MIL - in-domain OOF",
+        "Set Transformer - in-domain OOF",
+    }
+    assert not {"CI low", "CI high", "95% CI"} & set(tables["table4"].columns)
+    set_metrics = pd.read_csv(ctx["registry"]["SUPERVISED_SET_RESULTS"])
+    assert set(set_metrics["criterion"]) == {"ranking", "max_f1", "fpr_operational"}
+    ranking_set = set_metrics.loc[set_metrics["criterion"].eq("ranking")].iloc[0]
+    assert ranking_set["AUPRC"] == pytest.approx(0.618284)
+    assert ranking_set["AUROC"] == pytest.approx(0.880518)
+    assert ranking_set["Brier"] == pytest.approx(0.076327)
+    set_max_f1 = set_metrics.loc[set_metrics["criterion"].eq("max_f1")].iloc[0]
+    assert set_max_f1["Precision"] == pytest.approx(0.592357)
+    assert set_max_f1["Recall"] == pytest.approx(0.556886)
+    assert set_max_f1["F1"] == pytest.approx(0.574074)
+    assert set_max_f1["FPR"] == pytest.approx(0.051419, abs=1e-6)
     assert (tables["table2"]["Delta Set-Attention"] > 0).all()
     assert int((tables["table2"]["_ci_low"] > 0).sum()) == 4
     assert int(((tables["table2"]["_ci_low"] <= 0) & (tables["table2"]["_ci_high"] >= 0)).sum()) == 1
@@ -115,6 +135,8 @@ def test_full_reporting_registry_and_repeatability(tmp_path):
         "figure_recall_fpr_en_to_phpt",
     }
     assert expected_stems <= set(first["figure_inventory"]["figure_id"])
+    contextual = first["figure_inventory"].loc[first["figure_inventory"]["figure_id"].eq("figure_contextual_baselines"), "source_artifact"].iloc[0]
+    assert "results/publichearing_lora_set_transformer_mil/80eb95b5698f4a75/outputs/overall_oof_metrics.csv" in contextual
     assert len(first["figure_inventory"]) == 23
     assert len(pd.read_csv(tmp_path / "figure_inventory.csv")) == 23
     assert "filename_pdf" not in pd.read_csv(tmp_path / "figure_inventory.csv").columns
