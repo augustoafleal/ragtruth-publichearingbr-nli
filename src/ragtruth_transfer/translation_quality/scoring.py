@@ -67,10 +67,10 @@ class Segment:
     label: Any
     role: str
     slot: int
-    source_en: str
-    translated_pt: str
-    claim_en: str
-    claim_pt: str
+    source_text: str
+    target_text: str
+    claim_source: str
+    claim_target: str
 
 
 def _sample(frame: pd.DataFrame, config: ScoringConfig) -> pd.DataFrame:
@@ -82,30 +82,46 @@ def _sample(frame: pd.DataFrame, config: ScoringConfig) -> pd.DataFrame:
     return frame
 
 
-def _build_segments(frame: pd.DataFrame) -> list[Segment]:
+def _pair_columns(frame: pd.DataFrame, stem: str, config: ScoringConfig) -> tuple[str, str]:
+    generic = (f"{stem}_source", f"{stem}_target")
+    if all(column in frame.columns for column in generic):
+        return generic
+    language_columns = (f"{stem}_{config.source_language}", f"{stem}_{config.target_language}")
+    if all(column in frame.columns for column in language_columns):
+        return language_columns
+    if stem == "claim" and {"claim_en", "claim_pt"}.issubset(frame.columns):
+        return ("claim_en", "claim_pt")
+    if stem.startswith("chunk_"):
+        slot = stem.split("_", 1)[1]
+        if {f"chunk_{slot}_en", f"chunk_{slot}_pt"}.issubset(frame.columns):
+            return (f"chunk_{slot}_en", f"chunk_{slot}_pt")
+    raise ValueError(f"Aligned artifact lacks source/target columns for {stem}.")
+
+
+def _build_segments(frame: pd.DataFrame, config: ScoringConfig) -> list[Segment]:
     segments: list[Segment] = []
+    claim_source_column, claim_target_column = _pair_columns(frame, "claim", config)
     for _, row in frame.iterrows():
-        claim_en = "" if row.get("claim_en") is None else str(row.get("claim_en"))
-        claim_pt = "" if row.get("claim_pt") is None else str(row.get("claim_pt"))
+        claim_source = "" if row.get(claim_source_column) is None else str(row.get(claim_source_column))
+        claim_target = "" if row.get(claim_target_column) is None else str(row.get(claim_target_column))
         common = dict(
             example_id=str(row["example_id"]),
             source_id=str(row.get("source_id")),
             split=row.get("split"),
             label=(bool(row["label"]) if row.get("label") is not None else None),
-            claim_en=claim_en,
-            claim_pt=claim_pt,
+            claim_source=claim_source,
+            claim_target=claim_target,
         )
-        segments.append(
-            Segment(role="claim", slot=0, source_en=claim_en, translated_pt=claim_pt, **common)
-        )
+        segments.append(Segment(role="claim", slot=0, source_text=claim_source, target_text=claim_target, **common))
         for slot in range(1, 5):
             if bool(row.get(f"chunk_{slot}_valid", False)):
+                source_column, target_column = _pair_columns(frame, f"chunk_{slot}", config)
                 segments.append(
                     Segment(
                         role="chunk",
                         slot=slot,
-                        source_en=str(row.get(f"chunk_{slot}_en") or ""),
-                        translated_pt=str(row.get(f"chunk_{slot}_pt") or ""),
+                        source_text=str(row.get(source_column) or ""),
+                        target_text=str(row.get(target_column) or ""),
                         **common,
                     )
                 )
@@ -125,13 +141,19 @@ def score_segments(
             "label": s.label,
             "role": s.role,
             "slot": s.slot,
-            "source_en": s.source_en,
-            "translated_pt": s.translated_pt,
+            "source_text": s.source_text,
+            "target_text": s.target_text,
+            f"source_{config.source_language}": s.source_text,
+            f"translated_{config.target_language}": s.target_text,
+            # Historical column names remain available for the EN→PT RAGTruth
+            # outputs; their values are always language-labelled, not positional.
+            "source_en": s.source_text if config.source_language == "en" else s.target_text,
+            "translated_pt": s.target_text if config.target_language == "pt" else s.source_text,
         }
         for s in segments
     ]
 
-    pairs = [(s.source_en, s.translated_pt) for s in segments]
+    pairs = [(s.source_text, s.target_text) for s in segments]
     for scorer in (scorers.heuristics, scorers.cometkiwi):
         if scorer is None:
             continue
@@ -141,33 +163,64 @@ def score_segments(
 
     chunk_idx = [i for i, s in enumerate(segments) if s.role == "chunk"]
     if scorers.nli is not None or scorers.detector_tokenizer is not None:
-        en_pairs = [(segments[i].source_en, segments[i].claim_en) for i in chunk_idx]
-        pt_pairs = [(segments[i].translated_pt, segments[i].claim_pt) for i in chunk_idx]
+        source_pairs = [(segments[i].source_text, segments[i].claim_source) for i in chunk_idx]
+        target_pairs = [(segments[i].target_text, segments[i].claim_target) for i in chunk_idx]
 
         if scorers.nli is not None:
-            probs_en = scorers.nli.entailment_probs(en_pairs)
-            probs_pt = scorers.nli.entailment_probs(pt_pairs)
+            probs_source = scorers.nli.entailment_probs(source_pairs)
+            probs_target = scorers.nli.entailment_probs(target_pairs)
             thr = config.entail_threshold
             for position, i in enumerate(chunk_idx):
-                p_en = float(probs_en[position])
-                p_pt = float(probs_pt[position])
-                delta = p_pt - p_en
+                p_source = float(probs_source[position])
+                p_target = float(probs_target[position])
+                delta = p_target - p_source
                 records[i].update(
                     {
-                        "nli_entail_en": p_en,
-                        "nli_entail_pt": p_pt,
+                        "nli_entail_source": p_source,
+                        "nli_entail_target": p_target,
+                        "nli_entail_en": p_source if config.source_language == "en" else p_target,
+                        "nli_entail_pt": p_source if config.source_language == "pt" else p_target,
                         "nli_entail_delta": delta,
+                        "nli_abs_delta": abs(delta),
                         "nli_entail_abs_delta": abs(delta),
-                        "nli_label_agree": bool((p_en >= thr) == (p_pt >= thr)),
+                        "nli_label_agree": bool((p_source >= thr) == (p_target >= thr)),
                     }
                 )
 
         if scorers.detector_tokenizer is not None:
             truncations = detector_truncation_flags(
-                scorers.detector_tokenizer, en_pairs, pt_pairs, config.detector_max_length
+                scorers.detector_tokenizer, source_pairs, target_pairs, config.detector_max_length
             )
             for position, i in enumerate(chunk_idx):
-                records[i].update(truncations[position])
+                truncation = dict(truncations[position])
+                source_tokens = truncation["detector_pair_tokens_en"]
+                target_tokens = truncation["detector_pair_tokens_pt"]
+                source_truncated = truncation["detector_truncated_en"]
+                target_truncated = truncation["detector_truncated_pt"]
+                records[i].update(
+                    {
+                        "detector_pair_tokens_source": source_tokens,
+                        "detector_pair_tokens_target": target_tokens,
+                        "detector_truncated_source": source_truncated,
+                        "detector_truncated_target": target_truncated,
+                        "detector_pair_tokens_en": target_tokens
+                        if config.source_language == "pt"
+                        else source_tokens,
+                        "detector_pair_tokens_pt": source_tokens
+                        if config.source_language == "pt"
+                        else target_tokens,
+                        "detector_truncated_en": target_truncated
+                        if config.source_language == "pt"
+                        else source_truncated,
+                        "detector_truncated_pt": source_truncated
+                        if config.source_language == "pt"
+                        else target_truncated,
+                        "detector_truncation_introduced": bool(
+                            target_tokens > config.detector_max_length
+                            and source_tokens <= config.detector_max_length
+                        ),
+                    }
+                )
     return pd.DataFrame.from_records(records)
 
 
@@ -220,6 +273,7 @@ def aggregate_examples(segment_frame: pd.DataFrame) -> pd.DataFrame:
             record["nli_abs_delta_max"] = float(abs_delta.max()) if len(abs_delta) else np.nan
             record["nli_label_flips"] = int((~agree.astype(bool)).sum()) if len(agree) else 0
             record["nli_any_flip"] = bool(record["nli_label_flips"] > 0)
+            record["nli_abs_delta"] = record["nli_abs_delta_mean"]
 
         if has_trunc:
             record["any_truncation_introduced"] = bool(
@@ -227,6 +281,10 @@ def aggregate_examples(segment_frame: pd.DataFrame) -> pd.DataFrame:
             )
             pt_tokens = chunk_rows["detector_pair_tokens_pt"].dropna()
             record["max_detector_pair_tokens_pt"] = int(pt_tokens.max()) if len(pt_tokens) else 0
+            target_tokens = chunk_rows["detector_pair_tokens_target"].dropna()
+            record["max_detector_pair_tokens_target"] = (
+                int(target_tokens.max()) if len(target_tokens) else 0
+            )
 
         records.append(record)
 
@@ -279,7 +337,7 @@ def score_translation_quality(
 ) -> ScoringResult:
     frame = pd.read_parquet(config.aligned_parquet)
     frame = _sample(frame, config)
-    segments = _build_segments(frame)
+    segments = _build_segments(frame, config)
 
     if scorers is None:
         scorers = build_scorers(config)

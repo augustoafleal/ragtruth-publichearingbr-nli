@@ -16,7 +16,7 @@ from ragtruth_transfer.translation_quality.config import load_alignment_config
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Alinha o artefato EN canônico ao dataset PT e valida a integridade."
+        description="Alinha o artefato source canônico ao dataset translated e valida a integridade."
     )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument(
@@ -27,7 +27,10 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_alignment_config(args.config)
-    for label, path in (("en_parquet", config.en_parquet), ("pt_parquet", config.pt_parquet)):
+    for label, path in (
+        ("source_artifact", config.source_artifact),
+        ("translated_artifact", config.translated_artifact),
+    ):
         if not path.is_file():
             parser.error(f"{label} não encontrado: {path}")
 
@@ -35,7 +38,7 @@ def main() -> None:
         result = align_translation_quality(config, validate_only=args.validate_only)
     except AlignmentIntegrityError as error:
         print(json.dumps({"backend": config.backend, "signature": config.signature, "counts": error.counts.to_dict()}, ensure_ascii=False, indent=2))
-        print("GATE DE INTEGRIDADE EN<->PT FALHOU.", file=sys.stderr)
+        print("GATE DE INTEGRIDADE source→target FALHOU.", file=sys.stderr)
         sys.exit(1)
 
     print(

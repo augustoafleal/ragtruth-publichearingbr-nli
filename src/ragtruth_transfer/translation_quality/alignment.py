@@ -7,7 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ..io_utils import sha256_file
+from ..io_utils import read_jsonl, sha256_file
+from ..translation import _publichearing_modelable_rows
 from ..ragtruth_top4_embeddings import sha256_text
 from .config import AlignmentConfig
 from .storage import write_json_atomic, write_parquet_atomic
@@ -25,10 +26,15 @@ class AlignmentIntegrityError(RuntimeError):
 
 @dataclass
 class AlignmentCounts:
+    source_rows: int = 0
+    translated_rows: int = 0
+    translated_extra_rows: int = 0
+    metadata_mismatches: int = 0
     pt_rows: int = 0
     en_rows: int = 0
     en_extra_rows: int = 0
     missing_in_en: int = 0
+    missing_in_translated: int = 0
     source_id_mismatches: int = 0
     label_mismatches: int = 0
     split_mismatches: int = 0
@@ -43,6 +49,7 @@ class AlignmentCounts:
     def gate_ok(self) -> bool:
         return (
             self.missing_in_en == 0
+            and self.en_extra_rows == 0
             and self.source_id_mismatches == 0
             and self.label_mismatches == 0
             and self.split_mismatches == 0
@@ -50,14 +57,20 @@ class AlignmentCounts:
             and self.evidence_mask_mismatches == 0
             and self.provenance_mismatches == 0
             and self.en_chunk_sha256_mismatches == 0
+            and self.metadata_mismatches == 0
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "source_rows": self.source_rows,
+            "translated_rows": self.translated_rows,
+            "translated_extra_rows": self.translated_extra_rows,
+            "metadata_mismatches": self.metadata_mismatches,
             "pt_rows": self.pt_rows,
             "en_rows": self.en_rows,
             "en_extra_rows": self.en_extra_rows,
             "missing_in_en": self.missing_in_en,
+            "missing_in_translated": self.missing_in_translated,
             "source_id_mismatches": self.source_id_mismatches,
             "label_mismatches": self.label_mismatches,
             "split_mismatches": self.split_mismatches,
@@ -132,7 +145,7 @@ def _check_signature_guard(frame: pd.DataFrame, column: str, expected: str | Non
         )
 
 
-def align_translation_quality(
+def _align_parquet_translation_quality(
     config: AlignmentConfig, *, validate_only: bool = False
 ) -> AlignmentResult:
     en = pd.read_parquet(config.en_parquet)
@@ -165,12 +178,16 @@ def align_translation_quality(
     _unique_or_raise(en[config.example_id_column].astype(str), "artefato EN")
 
     counts = AlignmentCounts(pt_rows=len(pt), en_rows=len(en))
+    counts.source_rows = len(en)
+    counts.translated_rows = len(pt)
+    counts.translated_extra_rows = counts.en_extra_rows
     mismatches: list[dict[str, Any]] = []
 
     pt_ids = set(pt[config.example_id_column].astype(str))
     en_ids = set(en[config.example_id_column].astype(str))
     missing = pt_ids - en_ids
     counts.missing_in_en = len(missing)
+    counts.missing_in_translated = len(missing)
     counts.en_extra_rows = len(en_ids - pt_ids)
     for example_id in list(missing)[:1000]:
         mismatches.append({"example_id": example_id, "reason": "missing_in_en"})
@@ -293,6 +310,25 @@ def align_translation_quality(
         records.append(record)
 
     out_frame = pd.DataFrame.from_records(records)
+    source_claim = f"claim_{config.source_language}"
+    target_claim = f"claim_{config.target_language}"
+    if source_claim not in out_frame.columns and config.source_language == "en":
+        source_claim = "claim_en"
+    if target_claim not in out_frame.columns and config.target_language == "pt":
+        target_claim = "claim_pt"
+    if source_claim in out_frame.columns and target_claim in out_frame.columns:
+        out_frame["claim_source"] = out_frame[source_claim]
+        out_frame["claim_target"] = out_frame[target_claim]
+        for slot in range(1, 5):
+            source_chunk = f"chunk_{slot}_{config.source_language}"
+            target_chunk = f"chunk_{slot}_{config.target_language}"
+            if source_chunk not in out_frame.columns and config.source_language == "en":
+                source_chunk = f"chunk_{slot}_en"
+            if target_chunk not in out_frame.columns and config.target_language == "pt":
+                target_chunk = f"chunk_{slot}_pt"
+            if source_chunk in out_frame.columns and target_chunk in out_frame.columns:
+                out_frame[f"chunk_{slot}_source"] = out_frame[source_chunk]
+                out_frame[f"chunk_{slot}_target"] = out_frame[target_chunk]
     result = AlignmentResult(config=config, counts=counts, frame=out_frame, mismatches=mismatches)
 
     if not counts.gate_ok:
@@ -311,6 +347,166 @@ def align_translation_quality(
     return result
 
 
+def _publichearing_untranslated_view(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the JSONL structure after removing only translated text fields."""
+    view: list[dict[str, Any]] = []
+    for record in records:
+        current = {key: value for key, value in record.items() if key != "metadados_extraidos"}
+        metadata = record.get("metadados_extraidos")
+        if not isinstance(metadata, dict):
+            raise ValueError("Registro PublicHearingBR sem metadados_extraidos")
+        metadata_view = {
+            key: value for key, value in metadata.items() if key != "envolvidos"
+        }
+        people_view: list[dict[str, Any]] = []
+        people = metadata.get("envolvidos")
+        if not isinstance(people, list):
+            raise ValueError("metadados_extraidos.envolvidos deve ser uma lista")
+        for person in people:
+            if not isinstance(person, dict):
+                raise ValueError("Envolvido PublicHearingBR inválido")
+            person_view = {key: value for key, value in person.items() if key != "opinioes"}
+            opinions = person.get("opinioes")
+            if not isinstance(opinions, list):
+                raise ValueError("envolvidos[].opinioes deve ser uma lista")
+            opinion_views: list[dict[str, Any]] = []
+            for opinion in opinions:
+                if not isinstance(opinion, dict):
+                    raise ValueError("Opinião PublicHearingBR inválida")
+                opinion_views.append(
+                    {key: value for key, value in opinion.items() if key not in {"opiniao", "chunks_proximos"}}
+                )
+            person_view["opinioes"] = opinion_views
+            people_view.append(person_view)
+        metadata_view["envolvidos"] = people_view
+        current["metadados_extraidos"] = metadata_view
+        view.append(current)
+    return view
+
+
+def _align_publichearing_translation_quality(
+    config: AlignmentConfig, *, validate_only: bool = False
+) -> AlignmentResult:
+    source_records = read_jsonl(config.source_artifact)
+    translated_records = read_jsonl(config.translated_artifact)
+    source_rows = _publichearing_modelable_rows(source_records)
+    translated_rows = _publichearing_modelable_rows(translated_records)
+    if config.expected_rows is not None and len(source_rows) != config.expected_rows:
+        raise ValueError(
+            f"artefato source possui {len(source_rows)} exemplos modeláveis, esperado {config.expected_rows}."
+        )
+    counts = AlignmentCounts(
+        source_rows=len(source_rows),
+        translated_rows=len(translated_rows),
+        pt_rows=len(translated_rows),
+        en_rows=len(source_rows),
+    )
+    mismatches: list[dict[str, Any]] = []
+
+    if len(source_records) != len(translated_records):
+        counts.metadata_mismatches += 1
+        mismatches.append({"reason": "top_level_cardinality"})
+    if _publichearing_untranslated_view(source_records) != _publichearing_untranslated_view(translated_records):
+        counts.metadata_mismatches += 1
+        mismatches.append({"reason": "untranslated_metadata"})
+
+    source_by_id = {row["example_id"]: row for row in source_rows}
+    translated_by_id = {row["example_id"]: row for row in translated_rows}
+    if len(source_by_id) != len(source_rows) or len(translated_by_id) != len(translated_rows):
+        raise ValueError("PublicHearingBR possui example_id duplicado.")
+    source_ids = set(source_by_id)
+    translated_ids = set(translated_by_id)
+    missing = source_ids - translated_ids
+    extra = translated_ids - source_ids
+    counts.missing_in_en = len(missing)
+    counts.missing_in_translated = len(missing)
+    counts.en_extra_rows = len(extra)
+    counts.translated_extra_rows = len(extra)
+    for example_id in sorted(missing)[:1000]:
+        mismatches.append({"example_id": example_id, "reason": "missing_in_translated"})
+    for example_id in sorted(source_ids & translated_ids):
+        source = source_by_id[example_id]
+        target = translated_by_id[example_id]
+        if str(source["hearing_id"]) != str(target["hearing_id"]):
+            counts.source_id_mismatches += 1
+            mismatches.append({"example_id": example_id, "reason": "source_id"})
+        if bool(source["label"]) != bool(target["label"]):
+            counts.label_mismatches += 1
+            mismatches.append({"example_id": example_id, "reason": "label"})
+        if len(source["chunks"]) != len(target["chunks"]):
+            counts.evidence_mask_mismatches += 1
+            mismatches.append({"example_id": example_id, "reason": "evidence_cardinality"})
+
+    records: list[dict[str, Any]] = []
+    for example_id in sorted(source_ids):
+        source = source_by_id[example_id]
+        target = translated_by_id.get(example_id)
+        record: dict[str, Any] = {
+            "example_id": example_id,
+            "source_id": source["hearing_id"],
+            "response_id": example_id,
+            "split": "all",
+            "label": bool(source["label"]),
+            "evidence_mask": [True, True, True, True],
+            "claim_source": source["claim"],
+            "source_claim_sha256": _text_sha256(source["claim"]),
+        }
+        target = target or {"claim": None, "chunks": [None] * 4}
+        record["claim_target"] = target["claim"]
+        record["target_claim_sha256"] = _text_sha256(target["claim"])
+        for slot, (source_text, target_text) in enumerate(
+            zip(source["chunks"], target["chunks"]), start=1
+        ):
+            record[f"chunk_{slot}_source"] = source_text
+            record[f"chunk_{slot}_target"] = target_text
+            record[f"chunk_{slot}_source_sha256"] = _text_sha256(source_text)
+            record[f"chunk_{slot}_target_sha256"] = _text_sha256(target_text)
+            record[f"chunk_{slot}_valid"] = True
+            counts.total_valid_chunks += 1
+        records.append(record)
+    result = AlignmentResult(config, counts, pd.DataFrame.from_records(records), mismatches)
+    if not counts.gate_ok:
+        if not validate_only:
+            config.run_dir.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(config.run_dir / "mismatches.json", mismatches[:1000])
+        raise AlignmentIntegrityError(
+            "GATE DE INTEGRIDADE source→target do PublicHearingBR falhou.", counts, mismatches
+        )
+    if not validate_only:
+        _write_outputs(result)
+    return result
+
+
+def _text_sha256(value: Any) -> str | None:
+    if value is None:
+        return None
+    import hashlib
+
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def align_translation_quality(
+    config: AlignmentConfig, *, validate_only: bool = False
+) -> AlignmentResult:
+    for artifact, expected, label in (
+        (config.source_artifact, config.expected_source_sha256, "source"),
+        (config.translated_artifact, config.expected_translated_sha256, "translated"),
+    ):
+        if expected and sha256_file(artifact) != expected:
+            raise ValueError(f"SHA-256 do artefato {label} diverge da configuração.")
+    source_format = (config.source_format or config.source_artifact.suffix.lstrip(".")).lower()
+    translated_format = (
+        config.translated_format or config.translated_artifact.suffix.lstrip(".")
+    ).lower()
+    if source_format == translated_format == "jsonl":
+        return _align_publichearing_translation_quality(config, validate_only=validate_only)
+    if source_format == translated_format == "parquet":
+        return _align_parquet_translation_quality(config, validate_only=validate_only)
+    raise ValueError(
+        "source_artifact e translated_artifact devem ter o mesmo formato suportado (parquet ou jsonl)."
+    )
+
+
 def _write_outputs(result: AlignmentResult) -> None:
     config = result.config
     run_dir = config.run_dir
@@ -325,8 +521,10 @@ def _write_outputs(result: AlignmentResult) -> None:
         "signature": config.signature,
         "config": config.to_dict(),
         "inputs": {
-            "en_parquet_sha256": sha256_file(config.en_parquet),
-            "pt_parquet_sha256": sha256_file(config.pt_parquet),
+            "source_artifact": str(config.source_artifact),
+            "translated_artifact": str(config.translated_artifact),
+            "source_artifact_sha256": sha256_file(config.source_artifact),
+            "translated_artifact_sha256": sha256_file(config.translated_artifact),
         },
         "counts": result.counts.to_dict(),
     }

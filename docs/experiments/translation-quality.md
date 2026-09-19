@@ -3,7 +3,7 @@
 ## Purpose
 
 This framework measures how faithful the machine translations of RAGTruth
-(NLLB and MADLAD) are and relates that quality, descriptively, to the
+and PublicHearingBR (NLLB and MADLAD) are and relates that quality, descriptively, to the
 hallucination detector's performance. It tests the hypothesis that **poor
 machine translation degrades hallucination detection** without over-claiming:
 all Stage 2 comparisons are descriptive.
@@ -17,7 +17,14 @@ Translation quality is computed **once per translation backend** and has **no
 seed**; seeds only appear downstream in Stage 2, when the same quality artifact
 is related to different detector runs.
 
-## Stage 0 — EN↔PT integrity and alignment
+## Stage 0 — source→target integrity and alignment
+
+The alignment contract is direction-agnostic. Each configuration declares
+`source_language`, `target_language`, `source_artifact` and
+`translated_artifact`; RAGTruth keeps its historical `en_parquet`/`pt_parquet`
+aliases. NLI deltas are always `target - source`, so a positive
+`nli_entail_delta` means that entailment probability increased after
+translation, regardless of the language pair.
 
 The Portuguese datasets overwrite only the `claim`/`chunk_*` text; every offset
 and provenance column is preserved. The canonical English training view
@@ -50,6 +57,16 @@ Output: `aligned.parquet` + `manifest.json` under
 On the full data the gate reports 34,604 rows, 104,252 valid chunks and 100 %
 SHA-256 match.
 
+PublicHearingBR uses its canonical nested JSONL directly; it is not converted
+to a RAGTruth Parquet schema. The strict join uses
+`hearing_id:person_index:opinion_index`, labels and all non-translated
+metadata, with 4,235 modelable examples and four evidence chunks per example:
+
+```bash
+python scripts/align_translation_quality.py --config configs/translation_quality_publichearing_nllb.yaml --validate-only
+python scripts/align_translation_quality.py --config configs/translation_quality_publichearing_madlad.yaml --validate-only
+```
+
 ## Stage 1 — quality scoring
 
 Per segment (the claim and each valid evidence chunk) the selected adapters run.
@@ -63,9 +80,9 @@ none of them (`pip install -e '.[quality]'` adds COMETKiwi).
   with `huggingface_hub.snapshot_download(revision=...)`, so the weights do not
   depend on the Hub's current state.
 - **NLI-consistency** — `P(entail | premise=evidence, hypothesis=claim)` scored
-  in EN and PT with a plain XNLI model (independent of the trained detector
-  checkpoint), emitting `nli_entail_delta`, `nli_entail_abs_delta`,
-  `nli_label_agree`. The model and tokenizer are loaded with an explicit
+  in source and target with a plain XNLI model (independent of the trained detector
+  checkpoint), emitting `nli_entail_delta` (`target - source`),
+  `nli_abs_delta`/`nli_entail_abs_delta`, and `nli_label_agree`. The model and tokenizer are loaded with an explicit
   `revision`.
 - **Detector truncation** (diagnostic only) — whether PT expansion overflows the
   detector's `max_length` when EN did not (`detector_truncation_introduced`).
@@ -166,6 +183,13 @@ python scripts/link_translation_quality_to_detection.py --config configs/transla
 python scripts/link_translation_quality_to_detection.py --config configs/translation_quality_nllb.yaml
 # same four commands for configs/translation_quality_madlad.yaml
 ```
+
+For PublicHearingBR, Stage 1 is ready with the same commands and the two
+direction-specific configs. The configs intentionally have no `link` section:
+the repository contains no PublicHearingBR PT→EN detector predictions with the
+required `example_id`, `source_id`, `label`, `score` and frozen confirmatory
+protocol contract. Existing PublicHearingBR CV outputs and RAGTruth transfer
+runs are not silently promoted to that Stage 2 role.
 
 ## Confirmatory signatures
 

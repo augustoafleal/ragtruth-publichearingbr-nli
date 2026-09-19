@@ -52,9 +52,15 @@ def _as_mapping(value: Any, label: str) -> dict[str, Any]:
 @dataclass(frozen=True)
 class AlignmentConfig:
     backend: str
-    en_parquet: Path
-    pt_parquet: Path
     output_dir: Path
+    en_parquet: Path | None = None
+    pt_parquet: Path | None = None
+    source_artifact: Path | None = None
+    translated_artifact: Path | None = None
+    source_language: str = "en"
+    target_language: str = "pt"
+    source_format: str | None = None
+    translated_format: str | None = None
     claim_column: str = "claim"
     chunk_columns: tuple[str, ...] = ("chunk_1", "chunk_2", "chunk_3", "chunk_4")
     evidence_mask_column: str = "evidence_mask"
@@ -64,6 +70,8 @@ class AlignmentConfig:
     split_column: str = "split"
     response_id_column: str = "response_id"
     expected_rows: int | None = None
+    expected_source_sha256: str | None = None
+    expected_translated_sha256: str | None = None
     expected_chunking_signature: str | None = None
     expected_tokenizer_revision: str | None = None
     schema_version: str = "ragtruth-translation-quality-alignment-v1"
@@ -71,6 +79,17 @@ class AlignmentConfig:
     def __post_init__(self) -> None:
         if not self.backend:
             raise ValueError("backend é obrigatório (por exemplo, nllb ou madlad).")
+        source = self.source_artifact or self.en_parquet
+        translated = self.translated_artifact or self.pt_parquet
+        if source is None or translated is None:
+            raise ValueError("source_artifact e translated_artifact são obrigatórios.")
+        object.__setattr__(self, "source_artifact", Path(source))
+        object.__setattr__(self, "translated_artifact", Path(translated))
+        # Keep the old attribute names as read-compatible aliases for RAGTruth.
+        object.__setattr__(self, "en_parquet", Path(self.en_parquet or source))
+        object.__setattr__(self, "pt_parquet", Path(self.pt_parquet or translated))
+        if not self.source_language or not self.target_language:
+            raise ValueError("source_language e target_language são obrigatórios.")
         if len(self.chunk_columns) != 4:
             raise ValueError("chunk_columns deve conter exatamente quatro colunas.")
 
@@ -78,9 +97,15 @@ class AlignmentConfig:
         return {
             "schema_version": self.schema_version,
             "backend": self.backend,
-            "en_parquet_name": self.en_parquet.name,
-            "pt_parquet_name": self.pt_parquet.name,
+            "source_artifact_name": self.source_artifact.name,
+            "translated_artifact_name": self.translated_artifact.name,
+            "source_language": self.source_language,
+            "target_language": self.target_language,
+            "source_format": self.source_format,
+            "translated_format": self.translated_format,
             "expected_rows": self.expected_rows,
+            "expected_source_sha256": self.expected_source_sha256,
+            "expected_translated_sha256": self.expected_translated_sha256,
             "expected_chunking_signature": self.expected_chunking_signature,
             "expected_tokenizer_revision": self.expected_tokenizer_revision,
             "claim_column": self.claim_column,
@@ -98,6 +123,8 @@ class AlignmentConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.recipe(),
+            "source_artifact": str(self.source_artifact),
+            "translated_artifact": str(self.translated_artifact),
             "en_parquet": str(self.en_parquet),
             "pt_parquet": str(self.pt_parquet),
             "output_dir": str(self.output_dir),
@@ -116,6 +143,8 @@ class ScoringConfig:
     backend: str
     aligned_parquet: Path
     output_dir: Path
+    source_language: str = "en"
+    target_language: str = "pt"
     metrics: tuple[str, ...] = ("heuristics",)
     device: str = "auto"
     batch_size: int = 32
@@ -158,6 +187,8 @@ class ScoringConfig:
         return {
             "schema_version": self.schema_version,
             "backend": self.backend,
+            "source_language": self.source_language,
+            "target_language": self.target_language,
             "metrics": list(self.metrics),
             "sample_split": self.sample_split,
             "sample_limit": self.sample_limit,
@@ -278,13 +309,14 @@ class LinkConfig:
 def alignment_from_mapping(raw: dict[str, Any], base_dir: Path) -> AlignmentConfig:
     backend = str(raw.get("backend", "")).strip()
     section = _as_mapping(raw.get("alignment", {}), "alignment")
-    for key in ("en_parquet", "pt_parquet"):
-        if not section.get(key):
-            raise ValueError(f"alignment.{key} é obrigatório.")
+    source_value = section.get("source_artifact", section.get("en_parquet"))
+    translated_value = section.get("translated_artifact", section.get("pt_parquet"))
+    if not source_value or not translated_value:
+        raise ValueError("alignment.source_artifact e alignment.translated_artifact são obrigatórios.")
     return AlignmentConfig(
         backend=backend,
-        en_parquet=_resolve_path(section["en_parquet"], base_dir),
-        pt_parquet=_resolve_path(section["pt_parquet"], base_dir),
+        source_artifact=_resolve_path(source_value, base_dir),
+        translated_artifact=_resolve_path(translated_value, base_dir),
         output_dir=_resolve_path(
             section.get("output_dir", f"results/translation_quality/{backend}/alignment"), base_dir
         ),
@@ -297,6 +329,14 @@ def alignment_from_mapping(raw: dict[str, Any], base_dir: Path) -> AlignmentConf
         split_column=str(section.get("split_column", "split")),
         response_id_column=str(section.get("response_id_column", "response_id")),
         expected_rows=(int(section["expected_rows"]) if section.get("expected_rows") is not None else None),
+        expected_source_sha256=(
+            str(section["expected_source_sha256"]) if section.get("expected_source_sha256") else None
+        ),
+        expected_translated_sha256=(
+            str(section["expected_translated_sha256"])
+            if section.get("expected_translated_sha256")
+            else None
+        ),
         expected_chunking_signature=(
             str(section["expected_chunking_signature"])
             if section.get("expected_chunking_signature")
@@ -306,6 +346,12 @@ def alignment_from_mapping(raw: dict[str, Any], base_dir: Path) -> AlignmentConf
             str(section["expected_tokenizer_revision"])
             if section.get("expected_tokenizer_revision")
             else None
+        ),
+        source_language=str(section.get("source_language", raw.get("source_language", "en"))),
+        target_language=str(section.get("target_language", raw.get("target_language", "pt"))),
+        source_format=(str(section["source_format"]) if section.get("source_format") else None),
+        translated_format=(
+            str(section["translated_format"]) if section.get("translated_format") else None
         ),
     )
 
@@ -325,6 +371,8 @@ def scoring_from_mapping(raw: dict[str, Any], base_dir: Path) -> ScoringConfig:
         output_dir=_resolve_path(
             section.get("output_dir", f"results/translation_quality/{backend}/scoring"), base_dir
         ),
+        source_language=str(section.get("source_language", raw.get("source_language", "en"))),
+        target_language=str(section.get("target_language", raw.get("target_language", "pt"))),
         metrics=tuple(section.get("metrics", ["heuristics"])),
         device=str(section.get("device", "auto")),
         batch_size=int(section.get("batch_size", 32)),
