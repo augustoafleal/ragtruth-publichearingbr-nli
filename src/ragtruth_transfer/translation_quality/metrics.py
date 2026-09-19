@@ -1,12 +1,36 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 from ..translation_qa import classify_translation_pair
 from .config import resolve_device
 
 Pair = tuple[str, str]
+
+
+def _resolve_comet_checkpoint(snapshot_dir: str | Path) -> Path:
+    """Find the checkpoint file inside a Hugging Face COMET snapshot."""
+    snapshot_path = Path(snapshot_dir)
+    if snapshot_path.is_file():
+        return snapshot_path
+
+    preferred = snapshot_path / "checkpoints" / "model.ckpt"
+    if preferred.is_file():
+        return preferred
+
+    candidates = sorted(snapshot_path.rglob("*.ckpt"))
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise FileNotFoundError(
+            f"Nenhum checkpoint .ckpt encontrado no snapshot COMET: {snapshot_path}"
+        )
+    raise RuntimeError(
+        "Snapshot COMET contém múltiplos checkpoints e nenhum é o esperado "
+        f"({preferred}): {', '.join(str(path) for path in candidates)}"
+    )
 
 
 def _clean(text: Any) -> str:
@@ -54,7 +78,8 @@ class CometKiwiScorer:
                 "COMETKiwi requer unbabel-comet. Instale com `pip install -e '.[quality]'`."
             ) from error
         checkpoint_dir = snapshot_download(repo_id=model_id, revision=revision)
-        model = load_from_checkpoint(checkpoint_dir)
+        checkpoint_path = _resolve_comet_checkpoint(checkpoint_dir)
+        model = load_from_checkpoint(str(checkpoint_path))
         return cls(model=model, batch_size=batch_size, device=resolve_device(device))
 
     def score_pairs(self, pairs: Sequence[Pair]) -> list[dict[str, Any]]:

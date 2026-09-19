@@ -102,9 +102,13 @@ def test_cli_pipeline_validate_only_and_run(tmp_path):
     align_validate = _run("align_translation_quality.py", "--config", str(config_path), "--validate-only")
     assert align_validate.returncode == 0, align_validate.stderr
     assert '"gate_ok": true' in align_validate.stdout
+    assert '"validate_only": true' in align_validate.stdout
+    assert '"artifacts_written": false' in align_validate.stdout
+    assert '"aligned_parquet":' in align_validate.stdout
 
     align = _run("align_translation_quality.py", "--config", str(config_path))
     assert align.returncode == 0, align.stderr
+    assert '"artifacts_written": true' in align.stdout
 
     score_validate = _run("score_translation_quality.py", "--config", str(config_path), "--validate-only")
     assert score_validate.returncode == 0, score_validate.stderr

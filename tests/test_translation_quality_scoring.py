@@ -294,7 +294,7 @@ def test_nli_loader_uses_revision(monkeypatch):
     assert captured["model"] == ("some-model", "rev-xyz")
 
 
-def test_cometkiwi_loader_uses_revision(monkeypatch):
+def test_cometkiwi_loader_uses_revision_and_nested_checkpoint(monkeypatch, tmp_path):
     import sys
     import types
 
@@ -310,12 +310,17 @@ def test_cometkiwi_loader_uses_revision(monkeypatch):
 
     import huggingface_hub
 
+    snapshot_dir = tmp_path / "fake-checkpoint"
+    checkpoint_path = snapshot_dir / "checkpoints" / "model.ckpt"
+    checkpoint_path.parent.mkdir(parents=True)
+    checkpoint_path.write_bytes(b"fake checkpoint")
+
     def fake_snapshot(**kwargs):
         captured.update(kwargs)
-        return "/tmp/fake-checkpoint"
+        return str(snapshot_dir)
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot)
     CometKiwiScorer.load("Unbabel/wmt22-cometkiwi-da", "rev-comet", "cpu", 8)
     assert captured["repo_id"] == "Unbabel/wmt22-cometkiwi-da"
     assert captured["revision"] == "rev-comet"
-    assert captured["path"] == "/tmp/fake-checkpoint"
+    assert captured["path"] == str(checkpoint_path)

@@ -22,7 +22,10 @@ def main() -> None:
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Executa a validação completa sem gravar artefatos.",
+        help=(
+            "Executa a validação completa sem gravar artefatos; "
+            "omita esta opção para gerar aligned.parquet."
+        ),
     )
     args = parser.parse_args()
 
@@ -46,7 +49,10 @@ def main() -> None:
             {
                 "backend": config.backend,
                 "signature": config.signature,
-                "run_dir": None if args.validate_only else str(config.run_dir),
+                "run_dir": str(config.run_dir),
+                "aligned_parquet": str(config.run_dir / "aligned.parquet"),
+                "validate_only": args.validate_only,
+                "artifacts_written": not args.validate_only,
                 "counts": result.counts.to_dict(),
             },
             ensure_ascii=False,
