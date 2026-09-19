@@ -25,13 +25,21 @@ from .tokenization import make_loader
 
 
 def _model_config(config: PublicHearingConfig) -> ExperimentConfig:
-    return ExperimentConfig.from_mapping({
+    model_config: dict[str, Any] = {
         "run_name": config.run_name, "model_id": config.model_id, "model_revision": config.model_revision,
-        "architecture": "gated_attention", "encoder_mode": "lora", "max_length": config.max_length,
+        "architecture": config.architecture, "encoder_mode": "lora", "max_length": config.max_length,
         "projection_size": config.projection_size, "attention_size": config.attention_size, "dropout": config.dropout, "gradient_checkpointing": config.gradient_checkpointing,
         "lora": {"r": config.lora_r, "alpha": config.lora_alpha, "dropout": config.lora_dropout, "target_modules": list(config.lora_target_modules)},
         "training": {"train_batch_size": config.train_batch_size, "eval_batch_size": config.eval_batch_size, "gradient_accumulation_steps": config.gradient_accumulation_steps, "head_learning_rate": config.head_lr, "encoder_learning_rate": config.lora_lr, "weight_decay": config.weight_decay, "warmup_ratio": config.warmup_ratio, "max_epochs": config.max_epochs, "early_stopping_patience": config.early_stopping_patience, "max_grad_norm": config.max_grad_norm, "use_class_weight": config.use_class_weight, "task_balanced_sampler": False, "num_workers": config.num_workers},
-    })
+    }
+    if config.set_transformer is not None:
+        model_config["set_transformer"] = {
+            "num_sab_layers": config.set_transformer.num_sab_layers,
+            "num_heads": config.set_transformer.num_heads,
+            "num_seeds": config.set_transformer.num_seeds,
+            "ffn_dim": config.set_transformer.ffn_dim,
+        }
+    return ExperimentConfig.from_mapping(model_config)
 
 
 def _seed(seed: int) -> None:

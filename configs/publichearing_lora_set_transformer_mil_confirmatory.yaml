@@ -1,0 +1,45 @@
+run_name: publichearing_lora_set_transformer_mil_confirmatory
+output_root: results/publichearing_lora_set_transformer_mil
+mode: confirmatory
+architecture: set_transformer
+set_transformer:
+  num_sab_layers: 1
+  num_heads: 4
+  num_seeds: 1
+  ffn_dim: 128
+dataset_repo: unicamp-dl/PublicHearingBR
+dataset_filename: PublicHearingBR_NLI.jsonl
+dataset_revision: 2f84a44bc34df483e25c987f0ff86caad0ab3433
+model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+split_seed: 42
+outer_splits: 5
+inner_splits: 5
+seeds: [101, 202, 303]
+max_epochs: 8
+max_length: 512
+tokenization_batch_size: 256
+projection_size: 128
+attention_size: 64
+dropout: 0.30
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.10
+lora_target_modules: [query_proj, value_proj]
+train_batch_size: 1
+eval_batch_size: 4
+gradient_accumulation_steps: 16
+lora_lr: 2.0e-4
+head_lr: 5.0e-4
+weight_decay: 0.01
+warmup_ratio: 0.10
+early_stopping_patience: 2
+max_grad_norm: 1.0
+use_class_weight: true
+mixed_precision: true
+gradient_checkpointing: true
+fpr_target: 0.10
+bootstrap_repetitions: 1000
+num_workers: 0
+include_checkpoints_in_zip: false
+save_checkpoints: true

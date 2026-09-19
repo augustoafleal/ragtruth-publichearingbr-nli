@@ -24,6 +24,12 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _experiment_identifier(config: PublicHearingConfig) -> str:
+    if config.architecture == "set_transformer":
+        return "publichearingbr_lora_set_transformer_mil_5fold"
+    return "publichearingbr_lora_attention_mil_5fold"
+
+
 @dataclass
 class PreparedExperiment:
     config: PublicHearingConfig
@@ -71,7 +77,7 @@ def prepare_experiment(config: PublicHearingConfig, force_tokenization: bool = F
     atomic_csv(outputs / "split_summary.csv", summary); atomic_csv(outputs / "fold_membership.csv", membership)
     atomic_json(run_dir / "experiment_signature.json", {"signature": signature, "payload": signature_payload})
     import peft, sklearn, transformers
-    run_config = {"experiment": "publichearingbr_lora_attention_mil_5fold", "protocol": "supervised in-domain grouped out-of-fold", "configuration": config.to_dict(), "dataset": {**audit, "path": str(dataset_path)}, "environment": {"python": platform.python_version(), "torch": torch.__version__, "transformers": transformers.__version__, "peft": peft.__version__, "scikit_learn": sklearn.__version__, "cuda_available": torch.cuda.is_available(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "gpu_vram_bytes": int(torch.cuda.get_device_properties(0).total_memory) if torch.cuda.is_available() else None}}
+    run_config = {"experiment": _experiment_identifier(config), "protocol": "supervised in-domain grouped out-of-fold", "configuration": config.to_dict(), "dataset": {**audit, "path": str(dataset_path)}, "environment": {"python": platform.python_version(), "torch": torch.__version__, "transformers": transformers.__version__, "peft": peft.__version__, "scikit_learn": sklearn.__version__, "cuda_available": torch.cuda.is_available(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "gpu_vram_bytes": int(torch.cuda.get_device_properties(0).total_memory) if torch.cuda.is_available() else None}}
     atomic_json(run_dir / "run_config.json", run_config)
     cache, cache_path = build_or_load_token_cache(frame, audit["dataset_sha256"], config, Path(config.output_root) / "cache", force=force_tokenization)
     return PreparedExperiment(config, frame, rejected, audit, folds, signature, run_dir, cache, cache_path)
