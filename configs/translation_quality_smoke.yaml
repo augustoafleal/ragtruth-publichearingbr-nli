@@ -1,0 +1,35 @@
+# Translation-quality evaluation — local CPU smoke config (NLLB).
+# Heuristics only (no model weights); Stage 2 runs on a 64-example sample of the
+# frozen-threshold linkage. Full COMETKiwi/NLI runs happen on the GPU cluster.
+backend: nllb
+
+alignment:
+  en_parquet: ../results/ragtruth_qa_training_view/deduplicate_source_claim_drop_conflicts_v1/0cdf598fa866741d/dataset.parquet
+  pt_parquet: ../data/processed/ragtruth_confirmatory_pt_nllb/dataset.parquet
+  output_dir: ../results/translation_quality/ragtruth_pt_nllb_smoke/alignment
+  expected_rows: 34604
+  expected_chunking_signature: 049927d4bb1e3082
+  expected_tokenizer_revision: d128750597153bb5987e10b1c3493a34e5a4502a
+
+scoring:
+  output_dir: ../results/translation_quality/ragtruth_pt_nllb_smoke/scoring
+  metrics: [heuristics]
+  device: cpu
+  batch_size: 8
+  sample_split: test
+  detector_truncation: false
+  detector_tokenizer_model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  detector_max_length: 512
+
+link:
+  output_dir: ../results/translation_quality/ragtruth_pt_nllb_smoke/link
+  predictions_parquet: ../runs/ragtruth_pt_nllb_confirmatory/70bb1cce59b8c824/seed_0/ragtruth_test/predictions.parquet
+  protocol_thresholds_json: ../runs/ragtruth_pt_nllb_confirmatory/70bb1cce59b8c824/seed_0/thresholds.json
+  threshold_criterion: f1
+  expected_protocol_signature: 70bb1cce59b8c824
+  quality_signal: any_exclusion_candidate
+  quality_direction: lower_is_better
+  num_quality_buckets: 2
+  bootstrap_samples: 100
+  bootstrap_seed: 42
+  sample_limit: 64

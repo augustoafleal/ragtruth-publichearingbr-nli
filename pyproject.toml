@@ -29,6 +29,11 @@ docs = [
   "mkdocs==1.6.1",
   "mkdocs-material==9.6.14",
 ]
+# COMETKiwi for translation-quality scoring; imported lazily, so the core
+# install and the test suite never need it.
+quality = [
+  "unbabel-comet>=2.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

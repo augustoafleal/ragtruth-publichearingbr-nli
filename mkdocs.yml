@@ -56,6 +56,7 @@ nav:
       - Threshold transfer: experiments/threshold-transfer.md
       - Continuous paired bootstrap: experiments/continuous-bootstrap.md
       - Thresholded paired bootstrap: experiments/thresholded-bootstrap.md
+      - Translation-quality evaluation: experiments/translation-quality.md
   - Preparation:
       - Overview: preparation/index.md
       - Environment: preparation/environment.md
