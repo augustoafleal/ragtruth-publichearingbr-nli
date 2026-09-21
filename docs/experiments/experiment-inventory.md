@@ -64,3 +64,14 @@ version is `paired-grouped-bootstrap-v2`; the earlier materialization records
 
 Each experiment page explains the purpose, required preparation, command, and
 outputs.
+
+## Additional reproducibility analysis
+
+- **Offline LLM tokenization and current-equivalent cost analysis**
+  reconstructs the published prompt configurations locally, counts tokens with
+  recorded tokenizer mappings, and applies versioned current USD pricing to the
+  four LLM comparators. It also reports the cloud-equivalent inference cost of
+  one Set Transformer model on a Tesla T4. See
+  [Offline LLM cost analysis](llm-cost-analysis.md). This is a cost analysis,
+  not a new model-training campaign, and it does not modify the frozen
+  experiment artifacts.

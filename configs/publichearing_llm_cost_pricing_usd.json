@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "analysis_type": "current-equivalent estimated inference cost",
+  "pricing_date": "2026-09-20",
+  "currency": "USD",
+  "llm_pricing": {
+    "gpt-4o": {
+      "original_model_identifier": "gpt-4o-2024-08-06",
+      "pricing_model": "gpt-4o-2024-08-06",
+      "pricing_basis": "EXACT CURRENT MODEL",
+      "input_price_usd_per_million_tokens": "2.50",
+      "output_price_usd_per_million_tokens": "10.00",
+      "pricing_date": "2026-09-20",
+      "official_pricing_source": "https://developers.openai.com/api/docs/models/gpt-4o",
+      "notes": "Standard text-token pricing; cached-input pricing is not used."
+    },
+    "gpt-4o-mini": {
+      "original_model_identifier": "gpt-4o-mini-2024-07-18",
+      "pricing_model": "gpt-4o-mini-2024-07-18",
+      "pricing_basis": "EXACT CURRENT MODEL",
+      "input_price_usd_per_million_tokens": "0.15",
+      "output_price_usd_per_million_tokens": "0.60",
+      "pricing_date": "2026-09-20",
+      "official_pricing_source": "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+      "notes": "Standard text-token pricing; cached-input pricing is not used."
+    },
+    "deepseek": {
+      "original_model_identifier": "deepseek-chat",
+      "pricing_model": "deepseek-flash",
+      "pricing_basis": "CURRENT SUCCESSOR",
+      "input_price_usd_per_million_tokens": "0.30",
+      "output_price_usd_per_million_tokens": "1.20",
+      "pricing_date": "2026-09-20",
+      "official_pricing_source": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "tariff_selection": "Peak cache-miss Flash rate; no cache discount; conservative standard/on-demand equivalent.",
+      "notes": "The official page states that legacy deepseek-v4-flash requests are served by DeepSeek-V4.1-Flash and billed at the Flash price."
+    },
+    "sabia-3.1": {
+      "original_model_identifier": "sabia-3.1-2025-05-08",
+      "pricing_model": "sabia-4",
+      "pricing_basis": "CURRENT SUCCESSOR",
+      "input_price_usd_per_million_tokens": "0.9695183432870551",
+      "output_price_usd_per_million_tokens": "3.8780733731482204",
+      "pricing_date": "2026-09-20",
+      "official_pricing_source": "https://docs.maritaca.ai/pt/precos",
+      "notes": "Provider-local prices were converted to USD using the closing PTAX midpoint recorded below. All monetary outputs use USD only."
+    }
+  },
+  "fx_conversion": {
+    "fx_pair": "BRL/USD",
+    "provider_local_currency_per_usd": "5.1572",
+    "quote_type": "BCB closing PTAX midpoint",
+    "quote_date": "2026-09-18",
+    "official_source": "https://ptax.bcb.gov.br/ptax_internet/consultarUltimaCotacaoDolar.do",
+    "calculation": "provider-local amount / provider_local_currency_per_usd = USD amount"
+  },
+  "set_transformer": {
+    "model": "set-transformer",
+    "provider": "Google Cloud",
+    "gpu": "1 x NVIDIA T4, 16 GB",
+    "host_configuration": "n1-standard-4, 4 vCPU, 15 GiB host memory",
+    "region": "us-central1",
+    "gpu_price_usd_per_hour": "0.35",
+    "host_price_usd_per_hour": "0.189999",
+    "total_usd_per_hour": "0.539999",
+    "pricing_date": "2026-09-20",
+    "official_gpu_pricing_source": "https://cloud.google.com/products/compute/gpus-pricing?hl=en",
+    "official_host_pricing_source": "https://cloud.google.com/products/compute/pricing/general-purpose",
+    "inference_examples": 4235,
+    "inference_seconds": "593",
+    "inference_gpu_hours": "0.164657",
+    "inference_measurement_qualification": "approximately",
+    "configuration_source": "runs/ragtruth_pt_nllb_set_transformer_confirmatory/29ec472694bb61a8/seed_2/run_manifest.json",
+    "inference_measurement_sources": [
+      "runs/ragtruth_pt_nllb_set_transformer_confirmatory/29ec472694bb61a8/seed_0/publichearing_zero_shot/bbe48b61de233427/run_log.jsonl",
+      "runs/ragtruth_pt_nllb_set_transformer_confirmatory/29ec472694bb61a8/seed_1/publichearing_zero_shot/eb4d8c0230c575a1/run_log.jsonl",
+      "runs/ragtruth_pt_nllb_set_transformer_confirmatory/29ec472694bb61a8/seed_2/publichearing_zero_shot/02b377440d0829fc/run_log.jsonl"
+    ],
+    "inference_cost_formula": "0.164657 * 0.539999",
+    "development_only_training_gpu_hours_three_seeds": "6.948743",
+    "development_training_inference_cost_separation": "Training of three seeds is not included in inference cost and is not summed as an ensemble."
+  }
+}
