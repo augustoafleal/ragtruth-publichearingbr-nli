@@ -1,0 +1,33 @@
+# Translation-quality evaluation — PublicHearingBR PT -> EN, MADLAD.
+# Paths are resolved relative to this configs/ directory.
+backend: madlad
+source_language: pt
+target_language: en
+
+alignment:
+  source_artifact: ~/.cache/huggingface/hub/datasets--unicamp-dl--PublicHearingBR/snapshots/2f84a44bc34df483e25c987f0ff86caad0ab3433/PublicHearingBR_NLI.jsonl
+  translated_artifact: ../data/processed/publichearing_nli_pt_to_en_madlad/PublicHearingBR_NLI.jsonl
+  source_format: jsonl
+  translated_format: jsonl
+  output_dir: ../results/translation_quality/publichearing_pt_to_en_madlad/alignment
+  expected_rows: 4235
+  expected_source_sha256: 13408024c4776eff24f05ee6a56f9b1d33614524d19e90c0cce2fa310487a34e
+  expected_translated_sha256: ac0885e840c59403d0d0bb7e180aa3af143e5ce8db6cf4588580ad4dfda39074
+
+scoring:
+  output_dir: ../results/translation_quality/publichearing_pt_to_en_madlad/scoring
+  source_language: pt
+  target_language: en
+  metrics: [heuristics, cometkiwi, nli_consistency]
+  device: auto
+  batch_size: 8
+  cometkiwi_model_id: Unbabel/wmt22-cometkiwi-da
+  cometkiwi_model_revision: 1ad785194e391eebc6c53e2d0776cada8f83179a
+  nli_model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  nli_model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  nli_max_length: 512
+  entail_threshold: 0.5
+  detector_truncation: true
+  detector_tokenizer_model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  detector_tokenizer_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  detector_max_length: 512

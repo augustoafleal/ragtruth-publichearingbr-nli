@@ -1,0 +1,41 @@
+# Translation-quality evaluation — NLLB condition.
+# Paths are resolved relative to this configs/ directory (project convention).
+backend: nllb
+
+alignment:
+  # Canonical English training view: the exact input that was machine-translated.
+  en_parquet: ../results/ragtruth_qa_training_view/deduplicate_source_claim_drop_conflicts_v1/0cdf598fa866741d/dataset.parquet
+  pt_parquet: ../data/processed/ragtruth_confirmatory_pt_nllb/dataset.parquet
+  output_dir: ../results/translation_quality/ragtruth_pt_nllb/alignment
+  expected_rows: 34604
+  expected_chunking_signature: 049927d4bb1e3082
+  expected_tokenizer_revision: d128750597153bb5987e10b1c3493a34e5a4502a
+
+scoring:
+  output_dir: ../results/translation_quality/ragtruth_pt_nllb/scoring
+  metrics: [heuristics, cometkiwi, nli_consistency]
+  device: auto
+  batch_size: 32
+  sample_split: test
+  cometkiwi_model_id: Unbabel/wmt22-cometkiwi-da
+  cometkiwi_model_revision: 1ad785194e391eebc6c53e2d0776cada8f83179a
+  nli_model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  nli_model_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  nli_max_length: 512
+  entail_threshold: 0.5
+  detector_truncation: true
+  detector_tokenizer_model_id: MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7
+  detector_tokenizer_revision: b5113eb38ab63efdd7f280f8c144ea8b13f978ce
+  detector_max_length: 512
+
+link:
+  output_dir: ../results/translation_quality/ragtruth_pt_nllb/link
+  predictions_parquet: ../runs/ragtruth_pt_nllb_confirmatory/70bb1cce59b8c824/seed_0/ragtruth_test/predictions.parquet
+  protocol_thresholds_json: ../runs/ragtruth_pt_nllb_confirmatory/70bb1cce59b8c824/seed_0/thresholds.json
+  threshold_criterion: f1
+  expected_protocol_signature: 70bb1cce59b8c824
+  quality_signal: nli_abs_delta_max
+  quality_direction: lower_is_better
+  num_quality_buckets: 4
+  bootstrap_samples: 1000
+  bootstrap_seed: 42
