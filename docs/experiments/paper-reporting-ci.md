@@ -1,45 +1,47 @@
-# CI do reporting baseado em artefatos congelados
+# Reporting CI based on frozen artifacts
 
-Os testes de reporting que validam provenance e resultados experimentais reais
-usam o marker `frozen_artifacts`. Eles não são executados pelo CI padrão,
-porque `runs/` e `results/` não são versionados no repositório.
+Reporting tests that validate provenance and real experimental results use the
+`frozen_artifacts` marker. They are not executed by the standard CI suite
+because `runs/` and `results/` are not versioned in the repository.
 
-## Auditoria
+## Audit
 
-Os seguintes testes dependem dos artefatos congelados de reporting:
+The following tests depend on frozen reporting artifacts:
 
 - `tests/test_paper_reporting.py`
   - `test_official_provenance_and_superseded_rejection`
   - `test_main_tables_thresholded_invariants_and_forest_smoke`
   - `test_full_reporting_registry_and_repeatability`
+- `tests/test_confirmatory_paper_figures.py`
+  - `test_confirmatory_figures_exclude_madlad_and_preserve_other_inventory`
 - `tests/test_thresholded_attention_set_analysis.py`
   - `test_attention_and_set_campaigns_are_accepted_by_preflight`
   - `test_small_real_bootstrap_is_deterministic_and_thresholds_are_fixed`
 
-Os testes de lógica desses módulos que usam apenas DataFrames pequenos,
-configurações ou diretórios temporários permanecem autocontidos.
+Logic tests in these modules that use only small DataFrames, configurations, or
+temporary directories remain self-contained.
 
-## Execução
+## Execution
 
-O CI padrão executa:
+Standard CI runs:
 
 ```bash
 pytest -q -m "not frozen_artifacts"
 ```
 
-A trilha de integração deve executar, após restaurar o bundle imutável:
+The integration track should run after restoring the immutable bundle:
 
 ```bash
 pytest -q -m frozen_artifacts
 ```
 
-Os testes continuam chamando `validate_sources()` e os validadores de
-provenance de forma estrita. A ausência de artefatos nessa segunda trilha deve
-ser reportada como erro.
+The tests continue to call `validate_sources()` and the provenance validators
+strictly. Missing artifacts in this second track must be reported as an error.
 
-## Artefatos mínimos para a futura trilha
+## Minimum artifacts for the future track
 
-Para `test_paper_reporting.py`, o bundle precisa restaurar:
+For `test_paper_reporting.py` and
+`test_confirmatory_paper_figures.py`, the bundle must restore:
 
 - `runs/publichearing_final_paired_bootstrap/fc7bbae7bd5d0c99/`
   - `final_bootstrap_summary.csv`
@@ -54,20 +56,21 @@ Para `test_paper_reporting.py`, o bundle precisa restaurar:
 - `runs/ragtruth_pt_nllb_filtered_confirmatory/63745412afdb52ac/aggregate/aggregate_metrics.csv`
 - `runs/ragtruth_pt_nllb_bertimbau_confirmatory/fce6272e2e72726d/aggregate/aggregate_metrics.csv`
 - `runs/publichearing_pt_nllb_attention_vs_set_thresholded_bootstrap/e0c75270065fc471/bootstrap_summary.json`
+- `results/paper/figure_inventory.csv`
 
-Para `test_thresholded_attention_set_analysis.py`, também são necessários os
-artefatos das campanhas:
+For `test_thresholded_attention_set_analysis.py`, the campaign artifacts are
+also required:
 
 - `runs/ragtruth_pt_nllb_confirmatory/70bb1cce59b8c824/`
 - `runs/ragtruth_pt_nllb_set_transformer_confirmatory/29ec472694bb61a8/`
 
-Em cada campanha, devem estar disponíveis o manifesto e a configuração
-resolvida, os manifests das seeds `0`, `1` e `2`, seus `validation_predictions.csv`
-e `thresholds.json`, o `aggregate/per_seed_metrics.csv` e, para cada seed, o
-manifesto, `metrics.json` e `predictions.parquet` do artefato
-`publichearing_zero_shot`.
+Each campaign must provide its manifest and resolved configuration, the
+manifests for seeds `0`, `1`, and `2`, their `validation_predictions.csv` and
+`thresholds.json`, `aggregate/per_seed_metrics.csv`, and, for each seed, the
+manifest, `metrics.json`, and `predictions.parquet` for the
+`publichearing_zero_shot` artifact.
 
-O job futuro pode extrair o bundle diretamente nesses caminhos relativos ao
-checkout. Uma variável como `REPORTING_ARTIFACT_ROOT` só será necessária se o
-bundle for mantido fora da árvore do repositório; nesta etapa não há download
-nem alteração do comportamento de `build_source_registry()`.
+The future job can extract the bundle directly into these paths relative to the
+checkout. A variable such as `REPORTING_ARTIFACT_ROOT` is needed only if the
+bundle is kept outside the repository tree; this setup performs no download and
+does not change `build_source_registry()` behavior.

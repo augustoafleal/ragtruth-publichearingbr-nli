@@ -33,7 +33,7 @@ traceability but are not primary results.
 - **Off the shelf NLI baseline**
   `runs/publichearing_off_the_shelf_max_entailment/54d9c623f8685c39/` is the
   fixed target-domain comparator: AUPRC 0.3375, AUROC 0.7680, Brier 0.1143
-  (diagnóstico de qualidade do score).
+  (score-quality diagnostic).
 - **Threshold transfer**
   `runs/ragtruth_off_the_shelf_threshold_transfer/3ceffc4a74b484fe/` transfers
   frozen operating points. `best_f1`: baseline F1/recall/FPR 0.1570/0.0918/
@@ -75,3 +75,8 @@ outputs.
   [Offline LLM cost analysis](llm-cost-analysis.md). This is a cost analysis,
   not a new model-training campaign, and it does not modify the frozen
   experiment artifacts.
+- **Confirmatory paper figures without MADLAD** uses the frozen reporting
+  summary to present only the three current NLLB conditions in the three
+  confirmatory figures. It is a presentation-only analysis and preserves the
+  historical five-condition generator. See
+  [Confirmatory paper figures](confirmatory-paper-figures.md).

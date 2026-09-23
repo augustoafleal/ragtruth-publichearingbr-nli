@@ -569,11 +569,12 @@ def grouped_metric_figure(labels: list[str], attention: list[float], set_values:
     return fig
 
 
-def forest_figure(labels: list[str], deltas: list[float], lows: list[float], highs: list[float], xlabel: str, title: str, lower_is_better: bool = False, groups: list[str] | None = None) -> plt.Figure:
+def forest_figure(labels: list[str], deltas: list[float], lows: list[float], highs: list[float], xlabel: str, title: str, lower_is_better: bool = False, groups: list[str] | None = None, height: float | None = None) -> plt.Figure:
     deltas, lows, highs = np.asarray(deltas), np.asarray(lows), np.asarray(highs)
     if np.any(lows > deltas) or np.any(deltas > highs):
         raise AssertionError("A forest point estimate lies outside its confidence interval.")
-    fig, ax = plt.subplots(figsize=(7.4, max(3.8, 0.55 * len(labels) + 1.5)))
+    figure_height = height if height is not None else max(3.8, 0.55 * len(labels) + 1.5)
+    fig, ax = plt.subplots(figsize=(7.4, figure_height))
     y = np.arange(len(labels))[::-1]
     ax.errorbar(deltas, y, xerr=[deltas - lows, highs - deltas], fmt="o", color="#4C78A8", ecolor="#4C78A8", elinewidth=1.5, capsize=3, markersize=5)
     ax.axvline(0, color="0.25", linewidth=1.0)

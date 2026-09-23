@@ -52,7 +52,9 @@ nav:
       - RAGTruth confirmatory: experiments/ragtruth-confirmatory.md
       - Pooling ablation: experiments/pooling-ablation.md
       - Set Transformer paired bootstrap: experiments/set-transformer-paired-bootstrap.md
+      - Confirmatory paper figures: experiments/confirmatory-paper-figures.md
       - Offline LLM cost analysis: experiments/llm-cost-analysis.md
+      - Paper reporting CI: experiments/paper-reporting-ci.md
       - Off the shelf NLI baseline: experiments/off-the-shelf-nli.md
       - Threshold transfer: experiments/threshold-transfer.md
       - Continuous paired bootstrap: experiments/continuous-bootstrap.md
