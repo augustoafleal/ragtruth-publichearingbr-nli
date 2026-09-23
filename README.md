@@ -1,15 +1,15 @@
-# RAGTruth → PublicHearingBR-NLI
+# RAGTruth and PublicHearingBR-NLI
 
 Reproducible data preparation, detector experiments, zero-shot transfer, and
-paper reporting for the RAGTruth → PublicHearingBR-NLI study.
+paper reporting for the RAGTruth and PublicHearingBR-NLI study.
 
 The repository includes:
 
-- PublicHearingBR supervised and RAGTruth confirmatory experiments;
-- NLI and threshold-transfer baselines;
-- pooling ablations and paired bootstrap analyses;
-- translation-quality analyses;
-- offline LLM tokenization and current-equivalent USD cost analysis;
+- PublicHearingBR supervised and RAGTruth confirmatory experiments.
+- NLI and threshold-transfer baselines.
+- Pooling ablations and paired bootstrap analyses.
+- Translation-quality analyses.
+- Offline LLM tokenization and current-equivalent USD cost analysis.
 - NLLB-only confirmatory paper figures, with the historical five-condition
   reporting mode preserved.
 
@@ -35,15 +35,15 @@ mkdocs build --strict
 
 Start with the [documentation home](docs/index.md), then use:
 
-- [Preparation](docs/preparation/index.md) for the environment and datasets;
+- [Preparation](docs/preparation/index.md) for the environment and datasets.
 - [Experiment inventory](docs/experiments/experiment-inventory.md) for the
-  canonical experiment families;
+  canonical experiment families.
 - [Pooling ablation](docs/experiments/pooling-ablation.md) for detector
-  variants;
+  variants.
 - [Confirmatory paper figures](docs/experiments/confirmatory-paper-figures.md)
-  for the NLLB-only presentation mode;
+  for the NLLB-only presentation mode.
 - [Offline LLM cost analysis](docs/experiments/llm-cost-analysis.md) for
-  tokenization and USD pricing;
+  tokenization and USD pricing.
 - [Reporting CI](docs/experiments/paper-reporting-ci.md) for frozen-artifact
   validation.
 
