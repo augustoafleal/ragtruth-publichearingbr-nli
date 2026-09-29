@@ -1,6 +1,6 @@
 site_name: RAGTruth to PublicHearingBR
 site_description: Reproducible experiment documentation
-site_url: http://localhost:8000
+site_url: https://augustoafleal.github.io/ragtruth-publichearingbr-nli/
 repo_name: ragtruth-publichearing-scripts
 
 theme:
