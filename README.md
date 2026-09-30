@@ -16,6 +16,12 @@ The repository includes:
 Frozen manifests, resolved configurations, predictions, metrics, and reports in
 `runs/` and `results/` are the source of truth for completed runs.
 
+## Results
+
+Under zero-shot transfer from English RAGTruth to Portuguese PublicHearingBR, the Set Transformer achieved **0.6035 AUPRC**, compared with **0.3375** for the off-the-shelf multilingual NLI baseline: a **78.8% relative improvement** without target-domain supervision.
+
+See the [documentation](https://augustoafleal.github.io/ragtruth-publichearingbr-nli/) for the main experimental results and comparisons.
+
 ## Installation
 
 ```bash
@@ -93,3 +99,17 @@ mkdocs build --strict
 
 Tests that require unversioned frozen artifacts are documented in
 [Reporting CI](docs/experiments/paper-reporting-ci.md).
+
+## Citation
+
+If you use this work, code, or experimental results, please cite:
+```bibtex
+@misc{leal2026crosslingual,
+  title  = {Cross-Lingual Transfer for Evidence-Based Hallucination Detection in PublicHearingBR},
+  author = {Leal, Augusto Antônio Fontanive and
+            de Souza, Arturo and
+            de Brum, Antônio Araújo and
+            Laner, João Augusto Tonial},
+  year   = {2026}
+}
+```
